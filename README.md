@@ -30,7 +30,7 @@ See [docs/DATASETS.md](docs/DATASETS.md).
 Standard 2→3 shiftN80 windows:
 
 ```bash
-python prepare_tsfile_compact_from_zip.py \
+python tools/prepare/prepare_tsfile_compact_from_zip.py \
   --zip_path /path/to/tsfile_datasets.zip \
   --output_root /path/to/datasetall_tsfile_compact \
   --iotdb_lib /path/to/iotdb/lib \
@@ -40,7 +40,7 @@ python prepare_tsfile_compact_from_zip.py \
 Dataset-specific custom conditions for dataset13/dataset14:
 
 ```bash
-python prepare_tsfile_compact_custom_conditions.py \
+python tools/prepare/prepare_tsfile_compact_custom_conditions.py \
   --zip_path /path/to/tsfile_datasets.zip \
   --output_root /path/to/datasetall_tsfile_compact \
   --iotdb_lib /path/to/iotdb/lib \
@@ -130,7 +130,7 @@ Forecasting defaults:
 Classification:
 
 ```bash
-python collect_qar_metrics_tables.py \
+python tools/collect/collect_qar_metrics_tables.py \
   --run_tags <RUN_TAG> \
   --output_dir experiment_artifacts/<RUN_TAG> \
   --compact_root /path/to/datasetall_tsfile_compact
@@ -139,7 +139,7 @@ python collect_qar_metrics_tables.py \
 Forecasting:
 
 ```bash
-python collect_qar_forecast_metrics_tables.py \
+python tools/collect/collect_qar_forecast_metrics_tables.py \
   --run_tags <RUN_TAG> \
   --output_dir experiment_artifacts/<RUN_TAG> \
   --compact_root /path/to/datasetall_tsfile_compact
@@ -148,6 +148,9 @@ python collect_qar_forecast_metrics_tables.py \
 ## Notes
 
 - This repo intentionally does not track datasets or experiment outputs.
+- Root-level files are kept to the minimum runnable entry points. Dataset/cache
+  builders live under `tools/prepare/`; result table collectors live under
+  `tools/collect/`.
 - This repo does not include direct IoTDB connection credentials. Training and
   forecasting consume compact caches; rebuild those caches outside the repo by
   passing explicit source paths and IoTDB/TSFile Java library paths.
