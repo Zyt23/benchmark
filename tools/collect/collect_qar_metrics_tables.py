@@ -117,13 +117,15 @@ def epoch_info(log_text):
     return epochs_run, best_epoch, '' if best_val_acc < 0 else best_val_acc, test_acc_at_best
 
 
-def collect_metrics(root, run_tags):
+def collect_metrics(root, run_tags, include_failed=False):
     rows = read_summary_rows(root, run_tags)
     metrics = []
     for row in rows:
         dataset = row['dataset']
         model = row['model']
         status = int(row['status'])
+        if status != 0 and not include_failed:
+            continue
         log_file = root / row['log'].lstrip('./')
         result_dir = root / row['result_dir'].lstrip('./')
         result_file = result_dir / 'result_classification.txt'
@@ -317,6 +319,8 @@ def main():
     parser.add_argument('--remote_project', default='')
     parser.add_argument('--compact_root', default='datasetall_compact')
     parser.add_argument('--force', action='store_true')
+    parser.add_argument('--include_failed', action='store_true',
+                        help='Include failed summary rows in CSV/README tables. Defaults to successful runs only.')
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
@@ -329,7 +333,7 @@ def main():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True)
 
-    metrics = collect_metrics(root, args.run_tags)
+    metrics = collect_metrics(root, args.run_tags, include_failed=args.include_failed)
     if not metrics:
         raise ValueError('No metrics collected')
 
