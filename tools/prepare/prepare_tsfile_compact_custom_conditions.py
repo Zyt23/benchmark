@@ -317,13 +317,34 @@ def csv_to_window(df, mode_set):
         for _, start, end in sorted(segments):
             pieces.append(feat[start:end])
     elif mode_set == 'phase_start80':
+        seq_len = sum(post for _, _, _, post in anchors_for_csv(mode_set))
+        x = np.zeros((seq_len, feat.shape[1]), dtype=np.float32)
+        mask = np.zeros(seq_len, dtype=np.float32)
+        offset = 0
+        missing = []
+        valid_any = False
         for phase, _, _, post in anchors_for_csv(mode_set):
             idx = find_phase_start(phases, phase)
             if idx < 0:
-                return None, None, 'MISSING_PHASE', f'phase={phase}'
-            if len(df) - idx < post:
-                return None, None, 'POST_SHORT', f'phase={phase} after={len(df)-idx} post={post}'
-            pieces.append(feat[idx:idx + post])
+                missing.append(f'phase={phase}:missing')
+                offset += post
+                continue
+            available = min(post, max(0, len(df) - idx))
+            if available <= 0:
+                missing.append(f'phase={phase}:empty')
+                offset += post
+                continue
+            x[offset:offset + available] = feat[idx:idx + available]
+            mask[offset:offset + available] = 1.0
+            if available < post:
+                missing.append(f'phase={phase}:short({available}/{post})')
+            valid_any = True
+            offset += post
+        if not valid_any:
+            return None, None, 'NO_VALID_PHASE_START', ';'.join(missing)
+        x = instance_norm(x, mask)
+        status = 'OK' if not missing else 'PARTIAL_PHASE_START'
+        return x, mask, status, ';'.join(missing)
     else:
         raise ValueError(f'Unsupported CSV mode_set: {mode_set}')
 
