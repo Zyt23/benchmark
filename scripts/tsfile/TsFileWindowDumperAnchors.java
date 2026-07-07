@@ -183,7 +183,7 @@ public class TsFileWindowDumperAnchors {
                 Converted converted;
                 try {
                     converted = convertOne(sample.path, mode, featureNames, measurements, anchors, seqLen,
-                            featureCount, shift, strictAnchors);
+                            featureCount, shift, strictAnchors, phaseStartMode);
                 } catch (Throwable t) {
                     converted = new Converted(seqLen, featureCount);
                     converted.status = "ERROR";
@@ -226,7 +226,7 @@ public class TsFileWindowDumperAnchors {
 
     private static Converted convertOne(String filePath, String mode, String[] featureNames, String[] measurements,
                                         Anchor[] anchors, int seqLen, int featureCount, int shift,
-                                        boolean strictAnchors) throws Exception {
+                                        boolean strictAnchors, boolean phaseStartMode) throws Exception {
         Converted out = new Converted(seqLen, featureCount);
         File file = new File(filePath);
 
