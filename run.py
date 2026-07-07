@@ -40,6 +40,11 @@ if __name__ == '__main__':
     parser.add_argument('--seq_len', type=int, default=96, help='input sequence length')
     parser.add_argument('--label_len', type=int, default=48, help='start token length')
     parser.add_argument('--pred_len', type=int, default=96, help='prediction sequence length')
+    parser.add_argument('--forecast_stride', type=int, default=80,
+                        help='QAR_forecast: sliding-window stride inside each compact flight/window')
+    parser.add_argument('--forecast_window_mode', type=str, default='segment',
+                        choices=['first', 'full', 'segment'],
+                        help='QAR_forecast windowing mode: first=legacy prefix only, full=slide over full concatenated sequence, segment=slide within anchor segments')
     parser.add_argument('--seasonal_patterns', type=str, default='Monthly', help='subset for M4')
     parser.add_argument('--inverse', action='store_true', help='inverse output data', default=False)
 

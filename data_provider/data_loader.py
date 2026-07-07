@@ -1,4 +1,5 @@
 import os
+import json
 import numpy as np
 import pandas as pd
 import glob
@@ -1180,10 +1181,13 @@ class QARCompactForecastDataset(Dataset):
         mask: (N, T)
 
     For long-term forecasting we keep the split at the flight/window level instead
-    of concatenating all flights into one artificial time series.  Each sample uses
-    the first ``seq_len`` points as encoder input and predicts the following
-    ``pred_len`` points.  ``seq_y`` follows the Time-Series-Library convention:
-    it contains ``label_len`` known decoder points plus ``pred_len`` future points.
+    of concatenating all flights into one artificial time series.  Each selected
+    flight/window is then expanded into one or more forecasting sub-windows.
+    When ``tsfile_conversion_meta.json`` contains anchor definitions, the default
+    ``segment`` mode slides inside each anchor segment and avoids crossing the
+    artificial concatenation boundaries between flight-condition snippets.
+    ``seq_y`` follows the Time-Series-Library convention: it contains
+    ``label_len`` known decoder points plus ``pred_len`` future points.
     """
 
     SPLIT_RATIOS = (0.7, 0.1, 0.2)
@@ -1234,12 +1238,16 @@ class QARCompactForecastDataset(Dataset):
             self.feature_cols = ['var_{}'.format(i) for i in range(x.shape[2])]
 
         required_len = self.seq_len + self.pred_len
+        self.forecast_stride = max(1, int(getattr(args, 'forecast_stride', required_len)))
+        self.forecast_window_mode = str(getattr(args, 'forecast_window_mode', 'segment')).lower()
+        if self.forecast_window_mode not in ('first', 'full', 'segment'):
+            raise ValueError('Unsupported QAR forecast window mode: {}'.format(self.forecast_window_mode))
+
         if x.shape[1] < required_len:
             raise ValueError(
                 'Forecast window too short: T={}, need seq_len + pred_len = {}'.format(
                     x.shape[1], required_len))
 
-        valid_prefix = mask[:, :required_len].sum(axis=1) >= required_len
         self._all_x = x
         self._all_labels = labels
         self._all_mask = mask
@@ -1250,7 +1258,7 @@ class QARCompactForecastDataset(Dataset):
 
         selected = []
         for label in np.unique(labels):
-            idx = np.flatnonzero((labels == label) & valid_prefix)
+            idx = np.flatnonzero(labels == label)
             n = len(idx)
             train_end = int(n * self.SPLIT_RATIOS[0])
             val_end = int(n * (self.SPLIT_RATIOS[0] + self.SPLIT_RATIOS[1]))
@@ -1261,8 +1269,10 @@ class QARCompactForecastDataset(Dataset):
             else:
                 selected.extend(idx[val_end:].tolist())
 
-        self.samples = np.asarray(selected, dtype=np.int64)
-        if len(self.samples) == 0:
+        self.source_samples = np.asarray(selected, dtype=np.int64)
+        self.segments = self._resolve_forecast_segments(root_path, self.max_seq_len, required_len)
+        self.windows = self._build_forecast_windows(self.source_samples, mask, required_len)
+        if len(self.windows) == 0:
             raise ValueError(
                 'No valid QAR forecast samples for flag={} in {}; check mask/window length.'.format(
                     self.flag, cache_path))
@@ -1271,15 +1281,84 @@ class QARCompactForecastDataset(Dataset):
         # Relative ordering is still available through the model's positional embedding.
         self._stamp = np.zeros((self.max_seq_len, 4), dtype=np.float32)
 
-        zero_rate = float((np.abs(x[self.samples]).sum(axis=(1, 2)) == 0).mean())
-        print('{} samples: {} (QAR forecast cache: {}, x_shape={}, zero_window_rate={:.6f})'.format(
-            self.flag, len(self.samples), cache_path, tuple(x.shape), zero_rate))
+        zero_count = 0
+        inspect_count = min(len(self.windows), 1000)
+        for cache_idx, start in self.windows[:inspect_count]:
+            window = x[int(cache_idx), int(start):int(start) + required_len]
+            if np.abs(window).sum() == 0:
+                zero_count += 1
+        zero_rate = float(zero_count / inspect_count) if inspect_count else 0.0
+        print('{} forecast windows: {} from {} compact samples '
+              '(mode={}, stride={}, segments={}, cache={}, x_shape={}, inspected_zero_window_rate={:.6f})'.format(
+                  self.flag, len(self.windows), len(self.source_samples), self.forecast_window_mode,
+                  self.forecast_stride, len(self.segments), cache_path, tuple(x.shape), zero_rate))
+
+    def _resolve_forecast_segments(self, root_path, total_len, required_len):
+        if self.forecast_window_mode == 'first':
+            return [(0, min(total_len, required_len))]
+        if self.forecast_window_mode == 'full':
+            return [(0, total_len)]
+
+        meta_path = os.path.join(root_path, 'tsfile_conversion_meta.json')
+        if not os.path.isfile(meta_path):
+            return [(0, total_len)]
+
+        try:
+            with open(meta_path, 'r', encoding='utf-8') as handle:
+                meta = json.load(handle)
+        except Exception as exc:
+            print('Warning: failed to read {}; falling back to full-window forecast segments: {}'.format(
+                meta_path, exc))
+            return [(0, total_len)]
+
+        anchors = meta.get('anchors') or []
+        segments = []
+        cursor = 0
+        for anchor in anchors:
+            try:
+                length = int(anchor.get('pre', 0)) + int(anchor.get('post', 0))
+            except Exception:
+                length = 0
+            if length <= 0:
+                continue
+            start = cursor
+            end = min(cursor + length, total_len)
+            if end - start >= required_len:
+                segments.append((start, end))
+            cursor += length
+
+        if not segments:
+            return [(0, total_len)]
+        if cursor != total_len:
+            print('Warning: anchor segment length {} != compact length {}; using bounded anchor segments only.'.format(
+                cursor, total_len))
+        return segments
+
+    def _segment_starts(self, start, end, required_len):
+        last_start = end - required_len
+        if last_start < start:
+            return []
+        starts = list(range(start, last_start + 1, self.forecast_stride))
+        if not starts or starts[-1] != last_start:
+            starts.append(last_start)
+        return starts
+
+    def _build_forecast_windows(self, source_samples, mask, required_len):
+        windows = []
+        for cache_idx in source_samples:
+            row_mask = mask[int(cache_idx)]
+            for segment_start, segment_end in self.segments:
+                for start in self._segment_starts(segment_start, segment_end, required_len):
+                    end = start + required_len
+                    if row_mask[start:end].sum() >= required_len:
+                        windows.append((int(cache_idx), int(start)))
+        return np.asarray(windows, dtype=np.int64)
 
     def __getitem__(self, index):
-        cache_idx = int(self.samples[index])
+        cache_idx = int(self.windows[index, 0])
+        s_begin = int(self.windows[index, 1])
         seq = self._all_x[cache_idx]
 
-        s_begin = 0
         s_end = s_begin + self.seq_len
         r_begin = s_end - self.label_len
         r_end = r_begin + self.label_len + self.pred_len
@@ -1291,7 +1370,7 @@ class QARCompactForecastDataset(Dataset):
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
-        return len(self.samples)
+        return len(self.windows)
 
     def inverse_transform(self, data):
         return data

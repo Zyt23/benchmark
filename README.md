@@ -35,7 +35,11 @@ The compact cache contains `x`, `mask`, `labels`, `feature_cols`,
   - `dataset14`: anchors from `320321gongkuang.py`.
 - Forecasting does not define separate flight conditions, but if it reads a
   compact cache built with the custom-condition script, it uses the same custom
-  windows as classification.
+  windows as classification. The forecasting loader expands each compact
+  flight/window into sliding prediction windows. By default it slides within
+  each anchor segment (`forecast_window_mode=segment`) with
+  `forecast_stride=80`, so it does not predict across artificial concatenation
+  boundaries between flight-condition snippets.
 
 ## Dataset mapping
 
@@ -136,6 +140,8 @@ bash scripts/long_term_forecast/run_QAR_tsfile_forecast_shiftN80.sh
 Forecasting defaults:
 
 - `seq_len=60`, `label_len=20`, `pred_len=20`
+- `forecast_window_mode=segment`, `forecast_stride=80`; this uses multiple
+  windows across each compact flight/window instead of only the first 80 points.
 - `features=M`, multivariate-to-multivariate forecasting
 - metrics: `mae`, `mse`, `rmse`, `mape`, `mspe`
 - `mape/mspe` can be `inf/nan` if true values contain zero; prefer

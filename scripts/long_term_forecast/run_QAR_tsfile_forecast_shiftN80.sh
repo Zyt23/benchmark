@@ -14,6 +14,8 @@ RUN_TAG="${RUN_TAG:-tsfile_forecast_shiftN80_$(date +%Y%m%d_%H%M%S)}"
 SEQ_LEN="${SEQ_LEN:-60}"
 LABEL_LEN="${LABEL_LEN:-20}"
 PRED_LEN="${PRED_LEN:-20}"
+FORECAST_STRIDE="${FORECAST_STRIDE:-80}"
+FORECAST_WINDOW_MODE="${FORECAST_WINDOW_MODE:-segment}"
 TRAIN_EPOCHS="${TRAIN_EPOCHS:-20}"
 PATIENCE="${PATIENCE:-3}"
 BATCH_SIZE="${BATCH_SIZE:-128}"
@@ -54,6 +56,7 @@ echo "Compact root: ${COMPACT_ROOT}"
 echo "Datasets: ${DATASETS}"
 echo "Models: ${MODELS}"
 echo "Window: seq_len=${SEQ_LEN}, label_len=${LABEL_LEN}, pred_len=${PRED_LEN}"
+echo "Forecast window mode: ${FORECAST_WINDOW_MODE}, stride=${FORECAST_STRIDE}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 echo "USE_MULTI_GPU: ${USE_MULTI_GPU}"
 echo "Checkpoints: ${CHECKPOINTS}"
@@ -101,6 +104,8 @@ PY
       --seq_len "${SEQ_LEN}" \
       --label_len "${LABEL_LEN}" \
       --pred_len "${PRED_LEN}" \
+      --forecast_stride "${FORECAST_STRIDE}" \
+      --forecast_window_mode "${FORECAST_WINDOW_MODE}" \
       --enc_in "${feature_count}" \
       --dec_in "${feature_count}" \
       --c_out "${feature_count}" \
