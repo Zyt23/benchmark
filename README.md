@@ -21,6 +21,22 @@ Both tasks consume compact caches:
 The compact cache contains `x`, `mask`, `labels`, `feature_cols`,
 `class_names`, and `phase_a_shift`.
 
+## Current version
+
+- The training code is versioned directly by git. `experiment_artifacts/` is
+  used only for collected outputs, not for code snapshots.
+- Classification and forecasting both read compact caches from
+  `<COMPACT_ROOT>/<dataset>/qar_compact_shiftN80.npz`; the model code does not
+  connect to IoTDB during training.
+- Dataset-specific custom flight-condition logic is applied when building the
+  compact cache. At present this custom logic covers `dataset13` and
+  `dataset14`:
+  - `dataset13`: anchors from `build_dataset15_1.py`;
+  - `dataset14`: anchors from `320321gongkuang.py`.
+- Forecasting does not define separate flight conditions, but if it reads a
+  compact cache built with the custom-condition script, it uses the same custom
+  windows as classification.
+
 ## Dataset mapping
 
 See [docs/DATASETS.md](docs/DATASETS.md).

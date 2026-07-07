@@ -8,6 +8,7 @@ Example:
 """
 
 import argparse
+import ast
 import csv
 import hashlib
 import os
@@ -70,6 +71,30 @@ def support_by_class(text):
     return supports
 
 
+def parse_int_metric(text, name):
+    value = grab_metric(text, rf'^{name}:(-?\d+)')
+    return int(value) if value != '' else ''
+
+
+def parse_confusion(text):
+    tn = parse_int_metric(text, 'TN')
+    fp = parse_int_metric(text, 'FP')
+    fn = parse_int_metric(text, 'FN')
+    tp = parse_int_metric(text, 'TP')
+    if all(value != '' for value in (tn, fp, fn, tp)):
+        return tn, fp, fn, tp
+
+    raw = grab_metric(text, r'^confusion matrix:(.+)$')
+    if raw:
+        try:
+            matrix = ast.literal_eval(raw)
+            if len(matrix) == 2 and len(matrix[0]) == 2 and len(matrix[1]) == 2:
+                return int(matrix[0][0]), int(matrix[0][1]), int(matrix[1][0]), int(matrix[1][1])
+        except Exception:
+            pass
+    return '', '', '', ''
+
+
 def epoch_info(log_text):
     best_epoch = ''
     best_val_acc = -1.0
@@ -113,6 +138,7 @@ def collect_metrics(root, run_tags):
         weighted_f1 = grab_metric(result_text, r'^weighted F1:([^\n]+)')
         true_counts = grab_metric(result_text, r'^true counts:([^\n]+)')
         pred_counts = grab_metric(result_text, r'^pred counts:([^\n]+)')
+        tn, fp, fn, tp = parse_confusion(result_text)
         metrics.append({
             'dataset': dataset,
             'model': model,
@@ -121,6 +147,10 @@ def collect_metrics(root, run_tags):
             'accuracy': accuracy,
             'macro_f1': macro_f1,
             'weighted_f1': weighted_f1,
+            'TN': tn,
+            'FP': fp,
+            'FN': fn,
+            'TP': tp,
             'true_counts': true_counts,
             'pred_counts': pred_counts,
             'epochs_run': epochs_run,
@@ -212,24 +242,6 @@ def copy_artifacts(root, output_dir, metrics):
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(result_file, dst)
 
-    code_files = [
-        '.gitattributes', '.gitignore', 'prepare_qar_compact.py',
-        'prepare_qar_compact_from_zips.py', 'prepare_tsfile_compact_from_zip.py',
-        'collect_qar_metrics_tables.py', 'run.py',
-        'data_provider/data_loader.py', 'data_provider/m4.py', 'data_provider/data_factory.py',
-        'layers/SelfAttention_Family.py', 'exp/exp_classification.py',
-        'scripts/tsfile/TsFileWindowDumper.java',
-        'scripts/classification/TimesNet_QAR_shiftN80.sh',
-        'scripts/classification/run_QAR_datasetall_shiftN80.sh',
-        'scripts/classification/orchestrate_QAR_datasetall_shiftN80.sh',
-    ]
-    for rel in code_files:
-        src = root / rel
-        if src.exists():
-            dst = output_dir / 'code' / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-
 
 def write_readme(output_dir, metrics, cache_rows, run_tags, remote_project, compact_root='datasetall_compact'):
     datasets = sorted({row['dataset'] for row in metrics}, key=dataset_sort_key)
@@ -240,9 +252,10 @@ def write_readme(output_dir, metrics, cache_rows, run_tags, remote_project, comp
     if remote_project:
         lines.append('- Remote project: `{}`'.format(remote_project))
     lines.append('- Models: {}'.format(', '.join(MODEL_ORDER)))
-    lines.append('- Metrics columns: `acc` is kept as an alias of `accuracy`, followed by `macro_f1` and `weighted_f1`.')
+    lines.append('- Metrics columns: `acc` is kept as an alias of `accuracy`, followed by `macro_f1`, `weighted_f1`, and binary `TN/FP/FN/TP`.')
     lines.append('- Compact cache root: `{}`.'.format(compact_root))
     lines.append('- Training setup: `phase_a_shift=-80`, `train_epochs=50`, `batch_size=128`; logs record exact `patience`, class weighting, and early-stopping metric.')
+    lines.append('- Code is versioned by git; this artifact copies only logs/results/tables, not code snapshots.')
     lines.append('')
     lines.append('## Summary')
     lines.append('')
@@ -264,7 +277,7 @@ def write_readme(output_dir, metrics, cache_rows, run_tags, remote_project, comp
     lines.append('')
     lines.append('## Per-dataset metric tables')
     lines.append('')
-    table_columns = ['model', 'acc', 'accuracy', 'macro_f1', 'weighted_f1']
+    table_columns = ['model', 'acc', 'accuracy', 'macro_f1', 'weighted_f1', 'TN', 'FP', 'FN', 'TP']
     for dataset in datasets:
         lines.append('### {}'.format(dataset))
         lines.append('')
@@ -276,6 +289,10 @@ def write_readme(output_dir, metrics, cache_rows, run_tags, remote_project, comp
                 'accuracy': format_metric(row['accuracy']),
                 'macro_f1': format_metric(row['macro_f1']),
                 'weighted_f1': format_metric(row['weighted_f1']),
+                'TN': row['TN'],
+                'FP': row['FP'],
+                'FN': row['FN'],
+                'TP': row['TP'],
             })
         lines.append(markdown_table(dataset_rows, table_columns))
         lines.append('')
@@ -318,13 +335,14 @@ def main():
 
     all_fields = [
         'dataset', 'model', 'status', 'acc', 'accuracy', 'macro_f1', 'weighted_f1',
+        'TN', 'FP', 'FN', 'TP',
         'true_counts', 'pred_counts',
         'epochs_run', 'best_epoch_by_val_acc', 'best_val_acc', 'test_acc_at_best_val',
         'test_support_class0', 'test_support_class1', 'run_tag', 'log_file', 'result_file',
     ]
     write_csv(output_dir / 'all_metrics.csv', metrics, all_fields)
 
-    table_fields = ['model', 'acc', 'accuracy', 'macro_f1', 'weighted_f1']
+    table_fields = ['model', 'acc', 'accuracy', 'macro_f1', 'weighted_f1', 'TN', 'FP', 'FN', 'TP']
     for dataset in sorted({row['dataset'] for row in metrics}, key=dataset_sort_key):
         rows = [
             {field: row[field] for field in table_fields}
