@@ -5,7 +5,9 @@ set -euo pipefail
 #
 # Stages:
 #   cls_core        classification: TimesNet/DLinear/iTransformer on anchor cache
-#   cls_attn        classification: Transformer/PatchTST on anchor cache, small batch
+#   cls_patchtst    classification: PatchTST on anchor cache, small batch
+#   cls_transformer classification: Transformer on anchor cache, very small batch
+#   cls_attn        compatibility alias: cls_transformer + cls_patchtst
 #   forecast_anchor long-term forecast on anchor cache, segment sliding windows
 #   forecast_phase80 long-term forecast on phase-start80 cache
 #   all             run all stages sequentially
@@ -31,10 +33,10 @@ run_cls_core() {
   bash scripts/classification/run_QAR_tsfile_shiftN80.sh
 }
 
-run_cls_attn() {
-  RUN_TAG="${RUN_TAG:-anchor_cls_attn_20260707}" \
+run_cls_patchtst() {
+  RUN_TAG="${RUN_TAG:-anchor_cls_patchtst_20260707}" \
   DATASETS="${DATASETS}" \
-  MODELS="${MODELS:-Transformer PatchTST}" \
+  MODELS="${MODELS:-PatchTST}" \
   BATCH_SIZE="${BATCH_SIZE:-16}" \
   CUDA_DEVICES="${CUDA_DEVICES:-6}" \
   USE_MULTI_GPU="${USE_MULTI_GPU:-0}" \
@@ -42,6 +44,24 @@ run_cls_attn() {
   COMPACT_ROOT="${ANCHOR_ROOT}" \
   PYTHON="${PYTHON}" \
   bash scripts/classification/run_QAR_tsfile_shiftN80.sh
+}
+
+run_cls_transformer() {
+  RUN_TAG="${RUN_TAG:-anchor_cls_transformer_20260707}" \
+  DATASETS="${DATASETS}" \
+  MODELS="${MODELS:-Transformer}" \
+  BATCH_SIZE="${BATCH_SIZE:-4}" \
+  CUDA_DEVICES="${CUDA_DEVICES:-7}" \
+  USE_MULTI_GPU="${USE_MULTI_GPU:-0}" \
+  NUM_WORKERS="${NUM_WORKERS:-2}" \
+  COMPACT_ROOT="${ANCHOR_ROOT}" \
+  PYTHON="${PYTHON}" \
+  bash scripts/classification/run_QAR_tsfile_shiftN80.sh
+}
+
+run_cls_attn() {
+  run_cls_transformer
+  run_cls_patchtst
 }
 
 run_forecast_anchor() {
@@ -82,6 +102,12 @@ case "${STAGE}" in
   cls_attn)
     run_cls_attn
     ;;
+  cls_patchtst)
+    run_cls_patchtst
+    ;;
+  cls_transformer)
+    run_cls_transformer
+    ;;
   forecast_anchor)
     run_forecast_anchor
     ;;
@@ -90,7 +116,8 @@ case "${STAGE}" in
     ;;
   all)
     run_cls_core
-    run_cls_attn
+    run_cls_transformer
+    run_cls_patchtst
     run_forecast_anchor
     run_forecast_phase80
     ;;
