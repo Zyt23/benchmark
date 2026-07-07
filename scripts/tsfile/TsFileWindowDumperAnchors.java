@@ -362,37 +362,45 @@ public class TsFileWindowDumperAnchors {
 
     private static void copyPhaseStartWindows(Converted out, List<float[]> rows, List<Integer> phases,
                                               Anchor[] anchors) {
-        List<Segment> segments = new ArrayList<>();
+        boolean partial = false;
+        StringBuilder messages = new StringBuilder();
+        int dstBase = 0;
         for (Anchor anchor : anchors) {
             int idx = findPhaseStart(phases, anchor.from);
             if (out.firstTransition < 0) {
                 out.firstTransition = idx;
             }
             if (idx < 0) {
-                out.status = "MISSING_PHASE";
-                out.message = "phase=" + anchor.from;
-                out.skip = true;
-                return;
+                partial = true;
+                appendMessage(messages, "missing_phase=" + anchor.from);
+                dstBase += anchor.length();
+                continue;
             }
-            if (rows.size() - idx < anchor.post) {
-                out.status = "POST_SHORT";
-                out.message = "phase=" + anchor.from + " after=" + (rows.size() - idx)
-                        + " post=" + anchor.post;
-                out.skip = true;
-                return;
+            int available = Math.max(0, Math.min(anchor.post, rows.size() - idx));
+            if (available < anchor.post) {
+                partial = true;
+                appendMessage(messages, "phase=" + anchor.from + " after=" + available
+                        + " post=" + anchor.post);
             }
-            segments.add(new Segment(idx, idx, idx + anchor.post));
-        }
-
-        segments.sort((a, b) -> Integer.compare(a.anchor, b.anchor));
-        int dst = 0;
-        for (Segment segment : segments) {
-            for (int i = segment.start; i < segment.end; i++, dst++) {
-                System.arraycopy(rows.get(i), 0, out.x[dst], 0, out.x[dst].length);
+            for (int k = 0; k < available; k++) {
+                int dst = dstBase + k;
+                System.arraycopy(rows.get(idx + k), 0, out.x[dst], 0, out.x[dst].length);
                 out.mask[dst] = 1.0f;
                 out.validRows++;
             }
+            dstBase += anchor.length();
         }
+        if (partial) {
+            out.status = out.validRows > 0 ? "PARTIAL_PHASE_START" : "NO_VALID_PHASE_START";
+            out.message = messages.toString();
+        }
+    }
+
+    private static void appendMessage(StringBuilder sb, String message) {
+        if (sb.length() > 0) {
+            sb.append(";");
+        }
+        sb.append(message);
     }
 
     private static float fieldToFloat(Field field) {
