@@ -26,9 +26,13 @@ import java.util.Map;
  * Convert TsFile samples with dataset-specific phase-transition anchor windows.
  *
  * Modes:
- *   standard_shift      - original 2->3 window, pre=30/post=70, with --shift
- *   dataset13_anchors  - anchors from datasetall_tsfile/build_dataset15_1.py
- *   dataset14_anchors  - anchors from datasetall_tsfile/320321gongkuang.py
+ *   standard_shift             - original 2->3 window, pre=30/post=70, with --shift
+ *   standard_320321_anchors    - standard 16 features + anchors from datasetall_tsfile/320321gongkuang.py
+ *   dataset13_anchors          - dataset13 native features + anchors from datasetall_tsfile/build_dataset15_1.py
+ *   dataset14_anchors          - dataset14 native features + anchors from datasetall_tsfile/320321gongkuang.py
+ *   standard_phase_start80     - standard 16 features + phase 0..12 starts, 80 rows each
+ *   dataset13_phase_start80    - dataset13 native features + phase 0..12 starts, 80 rows each
+ *   dataset14_phase_start80    - dataset14 native features + phase 0..12 starts, 80 rows each
  */
 public class TsFileWindowDumperAnchors {
     private static final String PHASE_MEASUREMENT = "flight_phase";
@@ -157,6 +161,7 @@ public class TsFileWindowDumperAnchors {
         String[] measurements = measurementsForMode(mode);
         Anchor[] anchors = anchorsForMode(mode);
         boolean strictAnchors = isStrictAnchorMode(mode);
+        boolean phaseStartMode = isPhaseStartMode(mode);
         int seqLen = totalLength(anchors);
         int featureCount = featureNames.length;
 
@@ -278,7 +283,9 @@ public class TsFileWindowDumperAnchors {
             fillSingleZeroIfPresent(rows, featureNames, "n21");
             fillSingleZeroIfPresent(rows, featureNames, "n22");
 
-            if (strictAnchors) {
+            if (phaseStartMode) {
+                copyPhaseStartWindows(out, rows, phases, anchors);
+            } else if (strictAnchors) {
                 copyStrictAnchorWindows(out, rows, phases, anchors);
             } else {
                 copyPaddedShiftWindow(out, rows, phases, anchors[0], shift);
@@ -353,6 +360,41 @@ public class TsFileWindowDumperAnchors {
         }
     }
 
+    private static void copyPhaseStartWindows(Converted out, List<float[]> rows, List<Integer> phases,
+                                              Anchor[] anchors) {
+        List<Segment> segments = new ArrayList<>();
+        for (Anchor anchor : anchors) {
+            int idx = findPhaseStart(phases, anchor.from);
+            if (out.firstTransition < 0) {
+                out.firstTransition = idx;
+            }
+            if (idx < 0) {
+                out.status = "MISSING_PHASE";
+                out.message = "phase=" + anchor.from;
+                out.skip = true;
+                return;
+            }
+            if (rows.size() - idx < anchor.post) {
+                out.status = "POST_SHORT";
+                out.message = "phase=" + anchor.from + " after=" + (rows.size() - idx)
+                        + " post=" + anchor.post;
+                out.skip = true;
+                return;
+            }
+            segments.add(new Segment(idx, idx, idx + anchor.post));
+        }
+
+        segments.sort((a, b) -> Integer.compare(a.anchor, b.anchor));
+        int dst = 0;
+        for (Segment segment : segments) {
+            for (int i = segment.start; i < segment.end; i++, dst++) {
+                System.arraycopy(rows.get(i), 0, out.x[dst], 0, out.x[dst].length);
+                out.mask[dst] = 1.0f;
+                out.validRows++;
+            }
+        }
+    }
+
     private static float fieldToFloat(Field field) {
         if (field == null || field.getDataType() == null) {
             return 0.0f;
@@ -377,6 +419,15 @@ public class TsFileWindowDumperAnchors {
     private static int findTransition(List<Integer> phases, int from, int to) {
         for (int i = 1; i < phases.size(); i++) {
             if (phases.get(i - 1) == from && phases.get(i) == to) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int findPhaseStart(List<Integer> phases, int phase) {
+        for (int i = 0; i < phases.size(); i++) {
+            if (phases.get(i) == phase) {
                 return i;
             }
         }
@@ -470,20 +521,24 @@ public class TsFileWindowDumperAnchors {
     }
 
     private static String[] featureNamesForMode(String mode) {
-        if ("standard_shift".equals(mode)) {
+        if ("standard_shift".equals(mode)
+                || "standard_320321_anchors".equals(mode)
+                || "standard_phase_start80".equals(mode)) {
             return STANDARD_FEATURE_NAMES;
         }
-        if ("dataset13_anchors".equals(mode)) {
+        if ("dataset13_anchors".equals(mode) || "dataset13_phase_start80".equals(mode)) {
             return DATASET13_FEATURES;
         }
-        if ("dataset14_anchors".equals(mode)) {
+        if ("dataset14_anchors".equals(mode) || "dataset14_phase_start80".equals(mode)) {
             return DATASET14_FEATURES;
         }
         throw new IllegalArgumentException("Unknown mode: " + mode);
     }
 
     private static String[] measurementsForMode(String mode) {
-        if ("standard_shift".equals(mode)) {
+        if ("standard_shift".equals(mode)
+                || "standard_320321_anchors".equals(mode)
+                || "standard_phase_start80".equals(mode)) {
             return STANDARD_MEASUREMENTS;
         }
         return featureNamesForMode(mode);
@@ -492,6 +547,9 @@ public class TsFileWindowDumperAnchors {
     private static Anchor[] anchorsForMode(String mode) {
         if ("standard_shift".equals(mode)) {
             return new Anchor[]{new Anchor(2, 3, 30, 70)};
+        }
+        if ("standard_320321_anchors".equals(mode)) {
+            return anchors320321();
         }
         if ("dataset13_anchors".equals(mode)) {
             return new Anchor[]{
@@ -509,24 +567,49 @@ public class TsFileWindowDumperAnchors {
             };
         }
         if ("dataset14_anchors".equals(mode)) {
-            return new Anchor[]{
-                    new Anchor(0, 1, 30, 100),
-                    new Anchor(1, 2, 30, 80),
-                    new Anchor(2, 3, 30, 30),
-                    new Anchor(4, 5, 30, 500),
-                    new Anchor(5, 6, 200, 200),
-                    new Anchor(6, 8, 200, 300),
-                    new Anchor(8, 9, 200, 250),
-                    new Anchor(9, 11, 200, 80),
-                    new Anchor(11, 12, 5, 40),
-                    new Anchor(12, 13, 30, 200)
-            };
+            return anchors320321();
+        }
+        if ("standard_phase_start80".equals(mode)
+                || "dataset13_phase_start80".equals(mode)
+                || "dataset14_phase_start80".equals(mode)) {
+            return phaseStart80Anchors();
         }
         throw new IllegalArgumentException("Unknown mode: " + mode);
     }
 
     private static boolean isStrictAnchorMode(String mode) {
-        return "dataset13_anchors".equals(mode) || "dataset14_anchors".equals(mode);
+        return "standard_320321_anchors".equals(mode)
+                || "dataset13_anchors".equals(mode)
+                || "dataset14_anchors".equals(mode);
+    }
+
+    private static boolean isPhaseStartMode(String mode) {
+        return "standard_phase_start80".equals(mode)
+                || "dataset13_phase_start80".equals(mode)
+                || "dataset14_phase_start80".equals(mode);
+    }
+
+    private static Anchor[] anchors320321() {
+        return new Anchor[]{
+                new Anchor(0, 1, 30, 100),
+                new Anchor(1, 2, 30, 80),
+                new Anchor(2, 3, 30, 30),
+                new Anchor(4, 5, 30, 500),
+                new Anchor(5, 6, 200, 200),
+                new Anchor(6, 8, 200, 300),
+                new Anchor(8, 9, 200, 250),
+                new Anchor(9, 11, 200, 80),
+                new Anchor(11, 12, 5, 40),
+                new Anchor(12, 13, 30, 200)
+        };
+    }
+
+    private static Anchor[] phaseStart80Anchors() {
+        Anchor[] anchors = new Anchor[13];
+        for (int phase = 0; phase <= 12; phase++) {
+            anchors[phase] = new Anchor(phase, phase, 0, 80);
+        }
+        return anchors;
     }
 
     private static int totalLength(Anchor[] anchors) {

@@ -18,11 +18,12 @@ MODEL_ORDER = ['Transformer', 'TimesNet', 'PatchTST', 'DLinear', 'iTransformer']
 
 
 def dataset_sort_key(name):
-    match = re.match(r'^dataset(\d+)(?:-(\d+))?$', name)
+    match = re.match(r'^dataset(\d+)(?:-(\d+))?(?:_(.+))?$', name)
     if not match:
         return (10 ** 9, 10 ** 9, name)
     suffix = int(match.group(2)) if match.group(2) is not None else -1
-    return (int(match.group(1)), suffix, name)
+    extra = match.group(3) or ''
+    return (int(match.group(1)), suffix, extra)
 
 
 def model_sort_key(name):

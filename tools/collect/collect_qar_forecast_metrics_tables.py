@@ -62,22 +62,6 @@ def safe_copy(src, dst):
         shutil.copy2(src, dst)
 
 
-def copy_code_snapshot(output_dir):
-    code_dir = output_dir / "code"
-    files = [
-        "run.py",
-        "data_provider/data_loader.py",
-        "data_provider/data_factory.py",
-        "exp/exp_long_term_forecasting.py",
-        "scripts/long_term_forecast/run_QAR_tsfile_forecast_shiftN80.sh",
-        "collect_qar_forecast_metrics_tables.py",
-    ]
-    for rel in files:
-        src = Path(rel)
-        if src.exists():
-            safe_copy(src, code_dir / rel)
-
-
 def make_markdown_table(df):
     lines = ["| model | mae | mse | rmse | mape | mspe |", "| --- | ---: | ---: | ---: | ---: | ---: |"]
     for _, row in df.iterrows():
@@ -165,11 +149,12 @@ def write_readme(output_dir, all_df, args):
 
     lines.append("## Notes")
     lines.append("")
-    lines.append("- 这版不是分类任务；入口是 `run.py --task_name long_term_forecast --data QAR_forecast`。")
-    lines.append("- 每个航班/窗口作为一个独立样本切分，默认用前 60 个时间点预测后 20 个时间点。")
-    lines.append("- 指标是在 compact cache 的归一化数值空间上计算的，主要用于比较模型和数据集之间的预测难度。")
-    lines.append("- `mape/mspe` 对这套 compact 数据不太适合：真实值里有 0，百分比误差会出现 `inf/nan`；判断结果时主要看 `mae/mse/rmse`。")
-    lines.append("- 如果某个数据集本身 compact 特征全零或字段未适配，预测指标可能会异常好看，需要结合数据诊断一起解释。")
+    lines.append("- This is a forecasting task: `run.py --task_name long_term_forecast --data QAR_forecast`.")
+    lines.append("- Code is versioned by git; this artifact copies only logs/results/tables, not code snapshots.")
+    lines.append("- Anchor compact caches are expanded into sliding 60->20 windows within anchor segments, avoiding artificial concatenation boundaries.")
+    lines.append("- Phase-start80 compact caches contain phase 0..12 start snippets of 80 points; each snippet contributes one 60->20 forecast window.")
+    lines.append("- Metrics are computed in the compact cache normalized value space and are mainly for comparing models/datasets.")
+    lines.append("- `mape/mspe` may be `inf/nan` when true values contain zero; prefer `mae/mse/rmse` for comparison.")
 
     readme.write_text("\n".join(lines), encoding="utf-8")
 
@@ -226,7 +211,6 @@ def main():
     for dataset, g in all_df.groupby("dataset"):
         g.to_csv(output_dir / "tables" / f"{dataset}_forecast_metrics.csv", index=False)
 
-    copy_code_snapshot(output_dir)
     write_readme(output_dir, all_df, args)
 
 

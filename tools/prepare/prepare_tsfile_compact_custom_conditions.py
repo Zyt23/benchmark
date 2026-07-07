@@ -1,13 +1,26 @@
 #!/usr/bin/env python
-"""Build dataset-specific tsfile compact caches for dataset13 and dataset14.
+"""Build QAR tsfile compact caches with custom flight-condition windows.
 
-This keeps the standard compact-cache contract used by QARFlightDatasetShift:
+Output contract:
 
     <output_root>/<dataset>/qar_compact_shiftN80.npz
 
-dataset13 uses anchors from ``datasetall_tsfile/build_dataset15_1.py``.
-dataset14 uses anchors from ``datasetall_tsfile/320321gongkuang.py`` and
-native dataset14 measurements instead of the old 16-feature QAR mapping.
+The script supports two condition/window definitions:
+
+``anchor``
+    Classification-style condition windows.  ``dataset13`` uses anchors from
+    ``datasetall_tsfile/build_dataset15_1.py``.  All other datasets use anchors
+    from ``datasetall_tsfile/320321gongkuang.py``; datasets 5-12/8-1 use the
+    standard 16 QAR features, while dataset14 uses its native 8 features.
+
+``phase_start80``
+    Forecasting condition windows.  For each flight, take 80 points from the
+    start of every flight phase 0..12, concatenate those 13 snippets, and let
+    the forecasting loader run 60->20 prediction inside each 80-point segment.
+
+Optionally, ``--dataset12_aug0_csv_zip`` appends extra class-0 CSV flights to
+the original dataset12 cache and writes the combined dataset as
+``dataset12_aug0``.
 """
 
 import argparse
@@ -21,13 +34,71 @@ import zipfile
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 
 DATASET_RE = re.compile(r'^tsfile_datasets/(dataset(?:\d+)(?:-\d+)?)_tsfile/([01])/(.+\.tsfile)$')
-DATASET_MODES = {
-    'dataset13': 'dataset13_anchors',
-    'dataset14': 'dataset14_anchors',
-}
+ALL_TSFILE_DATASETS = [
+    'dataset5', 'dataset6', 'dataset7', 'dataset8', 'dataset8-1',
+    'dataset9', 'dataset10', 'dataset11', 'dataset12', 'dataset13', 'dataset14',
+]
+STANDARD_FEATURE_NAMES = [
+    'N21', 'N22', 'BMPS1', 'BMPS2',
+    'PRECOOL_PRESS1', 'PRECOOL_PRESS2',
+    'PRV_ENG1_R', 'PRV_ENG2_R',
+    'HPV_ENG1_R', 'HPV_ENG2_R',
+    'PRECOOL_TEMP1', 'PRECOOL_TEMP2',
+    'PACK1_RAM_I_DR', 'PACK1_RAM_O_DR',
+    'PACK2_RAM_I_DR', 'PACK2_RAM_O_DR',
+]
+ANCHORS_320321 = [
+    (0, 1, 30, 100),
+    (1, 2, 30, 80),
+    (2, 3, 30, 30),
+    (4, 5, 30, 500),
+    (5, 6, 200, 200),
+    (6, 8, 200, 300),
+    (8, 9, 200, 250),
+    (9, 11, 200, 80),
+    (11, 12, 5, 40),
+    (12, 13, 30, 200),
+]
+PHASE_START80 = [(phase, phase, 0, 80) for phase in range(13)]
+
+
+def dataset_sort_key(name):
+    match = re.match(r'^dataset(\d+)(?:-(\d+))?(?:_(.+))?$', name)
+    if not match:
+        return (10 ** 9, 10 ** 9, name)
+    suffix = int(match.group(2)) if match.group(2) is not None else -1
+    extra = match.group(3) or ''
+    return (int(match.group(1)), suffix, extra)
+
+
+def mode_for_dataset(dataset, mode_set):
+    if mode_set == 'anchor':
+        if dataset == 'dataset13':
+            return 'dataset13_anchors'
+        if dataset == 'dataset14':
+            return 'dataset14_anchors'
+        return 'standard_320321_anchors'
+
+    if mode_set == 'phase_start80':
+        if dataset == 'dataset13':
+            return 'dataset13_phase_start80'
+        if dataset == 'dataset14':
+            return 'dataset14_phase_start80'
+        return 'standard_phase_start80'
+
+    raise ValueError(f'Unsupported mode_set: {mode_set}')
+
+
+def anchors_for_csv(mode_set):
+    if mode_set == 'anchor':
+        return ANCHORS_320321
+    if mode_set == 'phase_start80':
+        return PHASE_START80
+    raise ValueError(f'Unsupported mode_set for CSV: {mode_set}')
 
 
 def scan_zip(zip_path):
@@ -83,6 +154,19 @@ def run_java(manifest, raw_out_dir, class_dir, lib_dir, java_class, mode, shift,
     subprocess.run(cmd, check=True)
 
 
+def save_compact(compact_path, x, mask, labels, feature_cols, shift):
+    compact_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        compact_path,
+        x=x.astype(np.float32, copy=False),
+        mask=mask.astype(np.float32, copy=False),
+        labels=labels.astype(np.int64, copy=False),
+        class_names=np.array(['0', '1']),
+        feature_cols=np.asarray(feature_cols).astype(str),
+        phase_a_shift=np.array([shift], dtype=np.int64),
+    )
+
+
 def write_npz(raw_out_dir, compact_path, shift):
     meta = json.loads((raw_out_dir / 'meta.json').read_text(encoding='utf-8'))
     n = int(meta['samples'])
@@ -105,16 +189,7 @@ def write_npz(raw_out_dir, compact_path, shift):
 
     x = x.reshape(n, seq_len, feature_count)
     mask = mask.reshape(n, seq_len)
-    compact_path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        compact_path,
-        x=x,
-        mask=mask,
-        labels=labels,
-        class_names=np.array(['0', '1']),
-        feature_cols=feature_cols,
-        phase_a_shift=np.array([shift], dtype=np.int64),
-    )
+    save_compact(compact_path, x, mask, labels, feature_cols, shift)
     return meta
 
 
@@ -164,8 +239,187 @@ def build_one_dataset(zf, entries, dataset, mode, output_root, work_root, class_
     return compact_path, meta
 
 
-def write_manifest(output_root, rows):
-    path = output_root / 'tsfile_custom_condition_manifest.csv'
+def column_lookup(columns):
+    return {str(column).strip().lower(): column for column in columns}
+
+
+def linear_fill_single_zero(values):
+    arr = values.copy()
+    for i in range(1, len(arr) - 1):
+        if arr[i] == 0 and arr[i - 1] != 0 and arr[i + 1] != 0:
+            arr[i] = (arr[i - 1] + arr[i + 1]) / 2.0
+    return arr
+
+
+def instance_norm(x, mask):
+    valid = mask > 0
+    if not np.any(valid):
+        return x
+    mean = x[valid].mean(axis=0)
+    std = x[valid].std(axis=0) + 1e-5
+    out = x.copy()
+    out[valid] = (out[valid] - mean) / std
+    out[~valid] = 0.0
+    return out
+
+
+def find_transition(phases, from_phase, to_phase):
+    hits = np.flatnonzero((phases[:-1] == from_phase) & (phases[1:] == to_phase))
+    if hits.size:
+        return int(hits[0] + 1)
+    if from_phase == 9 and to_phase == 11:
+        hits = np.flatnonzero((phases[:-1] == 10) & (phases[1:] == 11))
+        if hits.size:
+            return int(hits[0] + 1)
+    return -1
+
+
+def find_phase_start(phases, phase):
+    hits = np.flatnonzero(phases == phase)
+    return int(hits[0]) if hits.size else -1
+
+
+def csv_to_window(df, mode_set):
+    lookup = column_lookup(df.columns)
+    phase_col = lookup.get('flight_phase')
+    if phase_col is None:
+        return None, None, 'NO_PHASE', 'missing FLIGHT_PHASE'
+
+    phase_float = pd.to_numeric(df[phase_col], errors='coerce').to_numpy(dtype=np.float64)
+    phases = np.full(phase_float.shape, -9999, dtype=np.int64)
+    ok_phase = np.isfinite(phase_float)
+    phases[ok_phase] = np.rint(phase_float[ok_phase]).astype(np.int64)
+
+    feature_arrays = []
+    for feature in STANDARD_FEATURE_NAMES:
+        col = lookup.get(feature.lower())
+        if col is None:
+            values = np.zeros(len(df), dtype=np.float32)
+        else:
+            values = pd.to_numeric(df[col], errors='coerce').fillna(0.0).to_numpy(dtype=np.float32)
+        if feature in ('N21', 'N22'):
+            values = linear_fill_single_zero(values)
+        feature_arrays.append(values)
+    feat = np.stack(feature_arrays, axis=1).astype(np.float32)
+
+    pieces = []
+    if mode_set == 'anchor':
+        segments = []
+        for from_phase, to_phase, pre, post in anchors_for_csv(mode_set):
+            idx = find_transition(phases, from_phase, to_phase)
+            if idx < 0:
+                return None, None, 'MISSING_TRANSITION', f'{from_phase}->{to_phase}'
+            if idx < pre:
+                return None, None, 'PRE_SHORT', f'{from_phase}->{to_phase} anchor={idx} pre={pre}'
+            if len(df) - idx < post:
+                return None, None, 'POST_SHORT', f'{from_phase}->{to_phase} after={len(df)-idx} post={post}'
+            segments.append((idx, idx - pre, idx + post))
+        for _, start, end in sorted(segments):
+            pieces.append(feat[start:end])
+    elif mode_set == 'phase_start80':
+        for phase, _, _, post in anchors_for_csv(mode_set):
+            idx = find_phase_start(phases, phase)
+            if idx < 0:
+                return None, None, 'MISSING_PHASE', f'phase={phase}'
+            if len(df) - idx < post:
+                return None, None, 'POST_SHORT', f'phase={phase} after={len(df)-idx} post={post}'
+            pieces.append(feat[idx:idx + post])
+    else:
+        raise ValueError(f'Unsupported CSV mode_set: {mode_set}')
+
+    x = np.concatenate(pieces, axis=0).astype(np.float32)
+    mask = np.ones(x.shape[0], dtype=np.float32)
+    x = instance_norm(x, mask)
+    return x, mask, 'OK', ''
+
+
+def build_csv_class0_arrays(csv_zip_path, mode_set, max_csv_files=0):
+    x_rows = []
+    mask_rows = []
+    stats = []
+    with zipfile.ZipFile(csv_zip_path) as zf:
+        members = sorted([name for name in zf.namelist() if name.lower().endswith('.csv')])
+        if max_csv_files:
+            members = members[:max_csv_files]
+        for idx, member in enumerate(members):
+            try:
+                with zf.open(member) as handle:
+                    df = pd.read_csv(handle)
+                x, mask, status, message = csv_to_window(df, mode_set)
+            except Exception as exc:
+                x, mask, status, message = None, None, 'ERROR', f'{type(exc).__name__}: {exc}'
+            if x is not None:
+                x_rows.append(x)
+                mask_rows.append(mask)
+                written_idx = len(x_rows) - 1
+            else:
+                written_idx = -1
+            stats.append({
+                'idx': idx,
+                'written_idx': written_idx,
+                'label': 0,
+                'status': status,
+                'source': member,
+                'message': message,
+            })
+            if (idx + 1) % 1000 == 0:
+                print(f'csv converted {idx + 1} / {len(members)}, written {len(x_rows)}', flush=True)
+
+    if not x_rows:
+        raise ValueError(f'No CSV class-0 windows were built from {csv_zip_path}')
+    return np.stack(x_rows), np.stack(mask_rows), stats
+
+
+def write_csv_stats(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('w', encoding='utf-8', newline='') as handle:
+        fieldnames = ['idx', 'written_idx', 'label', 'status', 'source', 'message']
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def build_dataset12_aug0(output_root, mode_set, shift, csv_zip_path, max_csv_files=0):
+    base_path = output_root / 'dataset12' / f'qar_compact_shiftN{abs(shift)}.npz'
+    if not base_path.exists():
+        raise FileNotFoundError(f'Build dataset12 before dataset12_aug0: {base_path}')
+
+    print(f'=== dataset12_aug0 from {csv_zip_path} ===', flush=True)
+    with np.load(base_path, allow_pickle=False) as base:
+        base_x = base['x']
+        base_mask = base['mask']
+        base_labels = base['labels']
+        feature_cols = base['feature_cols']
+
+    csv_x, csv_mask, stats = build_csv_class0_arrays(csv_zip_path, mode_set, max_csv_files=max_csv_files)
+    if csv_x.shape[1:] != base_x.shape[1:]:
+        raise ValueError(f'CSV shape {csv_x.shape[1:]} does not match base dataset12 {base_x.shape[1:]}')
+
+    labels = np.concatenate([base_labels, np.zeros(csv_x.shape[0], dtype=np.int64)])
+    x = np.concatenate([base_x, csv_x], axis=0)
+    mask = np.concatenate([base_mask, csv_mask], axis=0)
+
+    out_dir = output_root / 'dataset12_aug0'
+    compact_path = out_dir / f'qar_compact_shiftN{abs(shift)}.npz'
+    save_compact(compact_path, x, mask, labels, feature_cols, shift)
+
+    meta_path = output_root / 'dataset12' / 'tsfile_conversion_meta.json'
+    meta = json.loads(meta_path.read_text(encoding='utf-8')) if meta_path.exists() else {}
+    meta.update({
+        'samples': int(labels.shape[0]),
+        'mode': mode_for_dataset('dataset12', mode_set),
+        'augmented_from': 'dataset12',
+        'augmented_class0_csv_zip': str(csv_zip_path),
+        'augmented_class0_samples': int(csv_x.shape[0]),
+    })
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / 'tsfile_conversion_meta.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+    write_csv_stats(out_dir / 'csv_append_stats.csv', stats)
+    return compact_path, meta
+
+
+def write_manifest(output_root, rows, mode_set):
+    path = output_root / f'tsfile_{mode_set}_manifest.csv'
     with path.open('w', encoding='utf-8', newline='') as handle:
         fieldnames = [
             'dataset', 'mode', 'samples', 'class0', 'class1',
@@ -177,8 +431,27 @@ def write_manifest(output_root, rows):
         writer.writerows(rows)
 
 
+def summarize_cache(output_root, dataset, compact_path, mode, meta):
+    with np.load(compact_path, allow_pickle=False) as cache:
+        labels = cache['labels']
+        x = cache['x']
+        zero = (np.abs(x).sum(axis=(1, 2)) == 0)
+    return {
+        'dataset': dataset,
+        'mode': mode,
+        'samples': int(labels.shape[0]),
+        'class0': int((labels == 0).sum()),
+        'class1': int((labels == 1).sum()),
+        'seq_len': int(meta.get('seq_len', x.shape[1])),
+        'feature_count': int(meta.get('feature_count', x.shape[2])),
+        'zero_window_count': int(zero.sum()),
+        'zero_window_rate': float(zero.mean()) if labels.shape[0] else '',
+        'cache_file': str(compact_path.relative_to(output_root.parent)),
+    }
+
+
 def main():
-    parser = argparse.ArgumentParser(description='Prepare dataset13/14 compact QAR caches with custom anchor conditions.')
+    parser = argparse.ArgumentParser(description='Prepare QAR compact caches with custom condition windows.')
     parser.add_argument('--zip_path', default='datasetall_tsfile/tsfile_datasets.zip')
     parser.add_argument('--output_root', default='datasetall_tsfile_compact')
     parser.add_argument('--work_root', default='datasetall_tsfile_work_custom_conditions')
@@ -186,10 +459,15 @@ def main():
     parser.add_argument('--java_src', default='scripts/tsfile/TsFileWindowDumperAnchors.java')
     parser.add_argument('--java_class', default='TsFileWindowDumperAnchors')
     parser.add_argument('--java_class_dir', default='.cache/tsfile_java_classes')
-    parser.add_argument('--datasets', nargs='*', default=['dataset13', 'dataset14'])
+    parser.add_argument('--datasets', nargs='*', default=ALL_TSFILE_DATASETS)
+    parser.add_argument('--mode_set', choices=['anchor', 'phase_start80'], default='anchor')
+    parser.add_argument('--dataset12_aug0_csv_zip', default='')
+    parser.add_argument('--dataset12_aug_name', default='dataset12_aug0')
     parser.add_argument('--shift', type=int, default=-80)
     parser.add_argument('--max_per_class', type=int, default=0,
-                        help='debug: limit files per class; 0 means all')
+                        help='debug: limit tsfile files per class; 0 means all')
+    parser.add_argument('--max_csv_files', type=int, default=0,
+                        help='debug: limit dataset12 appended CSV files; 0 means all')
     parser.add_argument('--keep_extracted', action='store_true')
     parser.add_argument('--java_xmx', default='4g')
     args = parser.parse_args()
@@ -208,9 +486,9 @@ def main():
     if not java_src.exists():
         raise FileNotFoundError(java_src)
 
-    unknown = [dataset for dataset in args.datasets if dataset not in DATASET_MODES]
+    unknown = [dataset for dataset in args.datasets if dataset not in ALL_TSFILE_DATASETS]
     if unknown:
-        raise ValueError(f'Only dataset13/dataset14 are supported here, got: {unknown}')
+        raise ValueError(f'Unsupported datasets: {unknown}')
 
     entries = scan_zip(zip_path)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -218,8 +496,8 @@ def main():
     manifest_rows = []
 
     with zipfile.ZipFile(zip_path) as zf:
-        for dataset in args.datasets:
-            mode = DATASET_MODES[dataset]
+        for dataset in sorted(args.datasets, key=dataset_sort_key):
+            mode = mode_for_dataset(dataset, args.mode_set)
             print(f'=== {dataset} ({mode}) ===', flush=True)
             compact_path, meta = build_one_dataset(
                 zf=zf,
@@ -237,26 +515,27 @@ def main():
                 keep_extracted=bool(args.keep_extracted),
                 java_xmx=args.java_xmx,
             )
-            with np.load(compact_path, allow_pickle=False) as cache:
-                labels = cache['labels']
-                x = cache['x']
-                zero = (np.abs(x).sum(axis=(1, 2)) == 0)
-            row = {
-                'dataset': dataset,
-                'mode': mode,
-                'samples': int(labels.shape[0]),
-                'class0': int((labels == 0).sum()),
-                'class1': int((labels == 1).sum()),
-                'seq_len': int(meta['seq_len']),
-                'feature_count': int(meta['feature_count']),
-                'zero_window_count': int(zero.sum()),
-                'zero_window_rate': float(zero.mean()) if labels.shape[0] else '',
-                'cache_file': str(compact_path.relative_to(output_root.parent)),
-            }
+            row = summarize_cache(output_root, dataset, compact_path, mode, meta)
             manifest_rows.append(row)
             print(f'wrote {compact_path} ({row["samples"]} samples)', flush=True)
 
-    write_manifest(output_root, manifest_rows)
+    if args.dataset12_aug0_csv_zip:
+        csv_zip_path = Path(args.dataset12_aug0_csv_zip).resolve()
+        if not csv_zip_path.exists():
+            raise FileNotFoundError(csv_zip_path)
+        compact_path, meta = build_dataset12_aug0(
+            output_root=output_root,
+            mode_set=args.mode_set,
+            shift=args.shift,
+            csv_zip_path=csv_zip_path,
+            max_csv_files=int(args.max_csv_files),
+        )
+        row = summarize_cache(output_root, args.dataset12_aug_name, compact_path,
+                              mode_for_dataset('dataset12', args.mode_set), meta)
+        manifest_rows.append(row)
+        print(f'wrote {compact_path} ({row["samples"]} samples)', flush=True)
+
+    write_manifest(output_root, manifest_rows, args.mode_set)
     print(output_root)
 
 

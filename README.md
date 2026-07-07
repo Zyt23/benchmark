@@ -29,10 +29,12 @@ The compact cache contains `x`, `mask`, `labels`, `feature_cols`,
   `<COMPACT_ROOT>/<dataset>/qar_compact_shiftN80.npz`; the model code does not
   connect to IoTDB during training.
 - Dataset-specific custom flight-condition logic is applied when building the
-  compact cache. At present this custom logic covers `dataset13` and
-  `dataset14`:
+  compact cache:
   - `dataset13`: anchors from `build_dataset15_1.py`;
-  - `dataset14`: anchors from `320321gongkuang.py`.
+  - `dataset5`-`dataset12`, `dataset8-1`, and `dataset14`: anchors from
+    `320321gongkuang.py`;
+  - `dataset12_aug0`: original `dataset12` plus extra class-0 CSV flights,
+    built with the same `320321gongkuang.py` anchors.
 - Forecasting does not define separate flight conditions, but if it reads a
   compact cache built with the custom-condition script, it uses the same custom
   windows as classification. The forecasting loader expands each compact
@@ -57,21 +59,51 @@ python tools/prepare/prepare_tsfile_compact_from_zip.py \
   --java_src scripts/tsfile/TsFileWindowDumper.java
 ```
 
-Dataset-specific custom conditions for dataset13/dataset14:
+Dataset-specific custom conditions for all datasets:
 
 ```bash
 python tools/prepare/prepare_tsfile_compact_custom_conditions.py \
   --zip_path /path/to/tsfile_datasets.zip \
-  --output_root /path/to/datasetall_tsfile_compact \
+  --output_root /path/to/datasetall_tsfile_compact_anchor \
   --iotdb_lib /path/to/iotdb/lib \
   --java_src scripts/tsfile/TsFileWindowDumperAnchors.java \
-  --datasets dataset13 dataset14
+  --mode_set anchor \
+  --datasets dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14
+```
+
+To build the dataset12 extra-normal version:
+
+```bash
+python tools/prepare/prepare_tsfile_compact_custom_conditions.py \
+  --zip_path /path/to/tsfile_datasets.zip \
+  --output_root /path/to/datasetall_tsfile_compact_anchor \
+  --iotdb_lib /path/to/iotdb/lib \
+  --java_src scripts/tsfile/TsFileWindowDumperAnchors.java \
+  --mode_set anchor \
+  --datasets dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14 \
+  --dataset12_aug0_csv_zip /path/to/data12-0类追加csv数据(1).zip
 ```
 
 The custom-condition script uses:
 
 - `dataset13_anchors`: phase anchors from `build_dataset15_1.py`
-- `dataset14_anchors`: phase anchors from `320321gongkuang.py`
+- `standard_320321_anchors`: standard 16 QAR features plus phase anchors from
+  `320321gongkuang.py`
+- `dataset14_anchors`: native dataset14 features plus phase anchors from
+  `320321gongkuang.py`
+
+Phase-start forecasting compact caches:
+
+```bash
+python tools/prepare/prepare_tsfile_compact_custom_conditions.py \
+  --zip_path /path/to/tsfile_datasets.zip \
+  --output_root /path/to/datasetall_tsfile_compact_phase_start80 \
+  --iotdb_lib /path/to/iotdb/lib \
+  --java_src scripts/tsfile/TsFileWindowDumperAnchors.java \
+  --mode_set phase_start80 \
+  --datasets dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14 \
+  --dataset12_aug0_csv_zip /path/to/data12-0类追加csv数据(1).zip
+```
 
 For CSV source datasets, a parameterized helper is available:
 
