@@ -76,6 +76,8 @@ run_forecast_anchor() {
   COMPACT_ROOT="${ANCHOR_ROOT}" \
   FORECAST_WINDOW_MODE="${FORECAST_WINDOW_MODE:-segment}" \
   FORECAST_STRIDE="${FORECAST_STRIDE:-80}" \
+  TRAIN_EPOCHS="${TRAIN_EPOCHS:-5}" \
+  PATIENCE="${PATIENCE:-2}" \
   PYTHON="${PYTHON}" \
   bash scripts/long_term_forecast/run_QAR_tsfile_forecast_shiftN80.sh
 }
@@ -91,6 +93,8 @@ run_forecast_phase80() {
   COMPACT_ROOT="${PHASE80_ROOT}" \
   FORECAST_WINDOW_MODE="${FORECAST_WINDOW_MODE:-segment}" \
   FORECAST_STRIDE="${FORECAST_STRIDE:-80}" \
+  TRAIN_EPOCHS="${TRAIN_EPOCHS:-5}" \
+  PATIENCE="${PATIENCE:-2}" \
   PYTHON="${PYTHON}" \
   bash scripts/long_term_forecast/run_QAR_tsfile_forecast_shiftN80.sh
 }
