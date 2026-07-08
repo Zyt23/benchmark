@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PYTHON="${PYTHON:-/home/para/anaconda3/bin/python}"
-DATASETS="${DATASETS:-dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14}"
+DATASETS="${DATASETS:-dataset5 dataset7 dataset8 dataset9 dataset10}"
 MODELS="${MODELS:-Transformer TimesNet PatchTST DLinear iTransformer}"
 RUN_TAG="${RUN_TAG:-datasetall_shiftN80_$(date +%Y%m%d_%H%M%S)}"
 TRAIN_EPOCHS="${TRAIN_EPOCHS:-50}"
@@ -14,8 +14,8 @@ USE_MULTI_GPU="${USE_MULTI_GPU:-1}"
 SAVE_EPOCH_CHECKPOINTS="${SAVE_EPOCH_CHECKPOINTS:-0}"
 CLASS_WEIGHT="${CLASS_WEIGHT:-balanced}"
 EARLY_STOP_METRIC="${EARLY_STOP_METRIC:-macro_f1}"
-COMPACT_ROOT="${COMPACT_ROOT:-./datasetall_tsfile_compact}"
-CHECKPOINTS="${CHECKPOINTS:-${HOME}/qar_checkpoint_archive/checkpoints_datasetall/${RUN_TAG}}"
+COMPACT_ROOT="${COMPACT_ROOT:-./datasetall_compact}"
+CHECKPOINTS="${CHECKPOINTS:-./checkpoints_datasetall/${RUN_TAG}}"
 LOG_DIR="${LOG_DIR:-./logs/datasetall/${RUN_TAG}}"
 SUMMARY_FILE="${SUMMARY_FILE:-${LOG_DIR}/summary.tsv}"
 
