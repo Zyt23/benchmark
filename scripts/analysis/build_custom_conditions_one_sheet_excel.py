@@ -141,7 +141,7 @@ def build_report(
     info_rows = [
         ["分类数据", "新工况 compact cache；除 dataset13 外参考 320321gongkuang.py，dataset13 参考 build_dataset15_1.py。"],
         ["分类训练", "class_weight=balanced；early_stop_metric=macro_f1；二分类正类=1类故障/异常。"],
-        ["分类结果备注", "当前分类代码用 TEST 同时作为 validation/test 做 early stopping，分类指标会偏乐观；严格结果应重新划分 TRAIN/VAL/TEST 后再跑。"],
+        ["分类结果备注", "valfix 结果使用独立 VAL 做 early stopping、独立 TEST 做最终测试；旧版 20260707 分类结果曾用 TEST 同时作为 validation/test，指标会偏乐观。"],
         ["预测 phase80 工况", "在 0→12 飞行阶段开始位置取 80 个点，前 60 预测后 20。"],
         ["预测说明", "mape/mspe 出现 inf 是因为原始/归一化目标中存在 0，主要看 mae/mse/rmse。"],
         ["混淆矩阵定义", "TN=真实0预测0；FP=真实0预测1；FN=真实1预测0；TP=真实1预测1。"],
