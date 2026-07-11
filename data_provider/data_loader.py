@@ -21,6 +21,47 @@ warnings.filterwarnings('ignore')
 
 HUGGINGFACE_REPO = "thuml/Time-Series-Library"
 
+
+def qar_time_sort_key(value):
+    """Best-effort chronological sort key for QAR file/source names."""
+    text = str(value).replace('\\', '/')
+    base = os.path.basename(text)
+    candidates = []
+
+    def add_candidate(year, month, day, hour=0, minute=0, second=0):
+        try:
+            year = int(year)
+            month = int(month)
+            day = int(day)
+            hour = int(hour)
+            minute = int(minute)
+            second = int(second)
+        except Exception:
+            return
+        if 2000 <= year <= 2099 and 1 <= month <= 12 and 1 <= day <= 31:
+            candidates.append((year, month, day, hour, minute, second))
+
+    for m in re.finditer(r'(20\d{2})[-_](\d{2})[-_](\d{2})[ T_](\d{2})[-_:](\d{2})[-_:](\d{2})', base):
+        add_candidate(*m.groups())
+    for m in re.finditer(r'(20\d{2})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})', base):
+        add_candidate(*m.groups())
+    for m in re.finditer(r'(20\d{2})[-_](\d{2})[-_](\d{2})', base):
+        add_candidate(*m.groups())
+    for m in re.finditer(r'(20\d{2})(\d{2})(\d{2})', base):
+        add_candidate(*m.groups())
+
+    if candidates:
+        return (0, min(candidates), base)
+    return (1, (9999, 12, 31, 23, 59, 59), base)
+
+
+def qar_time_key_int(value):
+    known, dt, _ = qar_time_sort_key(value)
+    if known:
+        return 99999999999999
+    y, mo, d, h, mi, s = dt
+    return int(f'{y:04d}{mo:02d}{d:02d}{h:02d}{mi:02d}{s:02d}')
+
 class Dataset_ETT_hour(Dataset):
     def __init__(self, args, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
@@ -898,14 +939,12 @@ class QARFlightDataset(Dataset):
     DROP_COLS = ('Time', 'FLIGHT_PHASE')
 
     @classmethod
-    def _split_by_flag(cls, items, flag):
-        """Deterministic per-class TRAIN/VAL/TEST split.
-
-        TEST intentionally remains the last 20% of each sorted class, matching
-        the previous 80/20 protocol.  VAL is the 70%-80% slice and is used only
-        for early stopping/model selection.
-        """
+    def _split_by_flag(cls, items, flag, key_fn=None):
+        """Deterministic chronological TRAIN/VAL/TEST split."""
         flag = str(flag).upper()
+        items = list(items)
+        if key_fn is not None:
+            items = sorted(items, key=key_fn)
         n = len(items)
         train_end = int(n * cls.SPLIT_RATIOS[0])
         val_end = int(n * (cls.SPLIT_RATIOS[0] + cls.SPLIT_RATIOS[1]))
@@ -943,12 +982,16 @@ class QARFlightDataset(Dataset):
 
         # 按类别内排序做 8:2 切分，保持类别平衡且无时间穿越
         self.samples = []  # list of (filepath, label_int)
+        all_samples = []
         for cls in self.class_names:
-            files = files_per_class[cls]
-            chosen = self._split_by_flag(files, self.flag)
             label = int(cls)
-            for f in chosen:
-                self.samples.append((f, label))
+            for f in files_per_class[cls]:
+                all_samples.append((f, label))
+        self.samples = self._split_by_flag(
+            all_samples,
+            self.flag,
+            key_fn=lambda item: qar_time_sort_key(item[0]),
+        )
 
         # 兼容 _build_model 所需属性
         self.max_seq_len = self.SEQ_LEN
@@ -1098,15 +1141,33 @@ class QARFlightDatasetShift(QARFlightDataset):
                 self.max_seq_len = int(self._compact_x.shape[1])
                 self.feature_df = pd.DataFrame(columns=self.feature_cols)
 
-                selected = []
-                for cls in self.class_names:
-                    class_indices = np.flatnonzero(self._compact_labels == int(cls))
-                    chosen = self._split_by_flag(class_indices, self.flag)
-                    selected.extend(chosen.tolist())
-                self.samples = selected
+                if 'sources' in cache.files:
+                    self._compact_sources = cache['sources'].astype(str)
+                else:
+                    self._compact_sources = np.asarray([str(i) for i in range(self._compact_labels.shape[0])])
+                if 'time_keys' in cache.files:
+                    self._compact_time_keys = cache['time_keys'].astype(np.int64, copy=False)
+                else:
+                    self._compact_time_keys = np.asarray(
+                        [qar_time_key_int(src) for src in self._compact_sources],
+                        dtype=np.int64,
+                    )
+
+                all_indices = np.arange(self._compact_labels.shape[0], dtype=np.int64)
+                self.samples = self._split_by_flag(
+                    all_indices,
+                    self.flag,
+                    key_fn=lambda i: (int(self._compact_time_keys[int(i)]), str(self._compact_sources[int(i)]), int(i)),
+                )
                 self._using_compact_cache = True
-                print('{} samples: {} (compact cache: {})'.format(
-                    self.flag, len(self.samples), cache_path))
+                if self.samples:
+                    first_i = int(self.samples[0])
+                    last_i = int(self.samples[-1])
+                    print('{} samples: {} (compact cache: {}, time_range={}..{})'.format(
+                        self.flag, len(self.samples), cache_path,
+                        int(self._compact_time_keys[first_i]), int(self._compact_time_keys[last_i])))
+                else:
+                    print('{} samples: 0 (compact cache: {})'.format(self.flag, cache_path))
                 return
 
         super().__init__(args, root_path, flag=flag)
@@ -1267,19 +1328,21 @@ class QARCompactForecastDataset(Dataset):
         self.feature_df = pd.DataFrame(columns=self.feature_cols)
         self.class_names = sorted([str(v) for v in np.unique(labels).tolist()], key=lambda z: int(z) if str(z).isdigit() else str(z))
 
-        selected = []
-        for label in np.unique(labels):
-            idx = np.flatnonzero((labels == label) & valid_prefix)
-            n = len(idx)
-            train_end = int(n * self.SPLIT_RATIOS[0])
-            val_end = int(n * (self.SPLIT_RATIOS[0] + self.SPLIT_RATIOS[1]))
-            if self.flag == 'train':
-                selected.extend(idx[:train_end].tolist())
-            elif self.flag == 'val':
-                selected.extend(idx[train_end:val_end].tolist())
-            else:
-                selected.extend(idx[val_end:].tolist())
+        if 'sources' in cache.files:
+            self._sources = cache['sources'].astype(str)
+        else:
+            self._sources = np.asarray([str(i) for i in range(labels.shape[0])])
+        if 'time_keys' in cache.files:
+            self._time_keys = cache['time_keys'].astype(np.int64, copy=False)
+        else:
+            self._time_keys = np.asarray([qar_time_key_int(src) for src in self._sources], dtype=np.int64)
 
+        valid_indices = np.flatnonzero(valid_prefix)
+        selected = QARFlightDataset._split_by_flag(
+            valid_indices,
+            self.flag,
+            key_fn=lambda i: (int(self._time_keys[int(i)]), str(self._sources[int(i)]), int(i)),
+        )
         self.samples = np.asarray(selected, dtype=np.int64)
         if len(self.samples) == 0:
             raise ValueError(
@@ -1291,8 +1354,11 @@ class QARCompactForecastDataset(Dataset):
         self._stamp = np.zeros((self.max_seq_len, 4), dtype=np.float32)
 
         zero_rate = float((np.abs(x[self.samples]).sum(axis=(1, 2)) == 0).mean())
-        print('{} samples: {} (QAR forecast cache: {}, x_shape={}, zero_window_rate={:.6f})'.format(
-            self.flag, len(self.samples), cache_path, tuple(x.shape), zero_rate))
+        first_i = int(self.samples[0])
+        last_i = int(self.samples[-1])
+        print('{} samples: {} (QAR forecast cache: {}, x_shape={}, zero_window_rate={:.6f}, time_range={}..{})'.format(
+            self.flag, len(self.samples), cache_path, tuple(x.shape), zero_rate,
+            int(self._time_keys[first_i]), int(self._time_keys[last_i])))
 
     def __getitem__(self, index):
         cache_idx = int(self.samples[index])
