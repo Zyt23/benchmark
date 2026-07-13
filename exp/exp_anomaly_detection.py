@@ -3,6 +3,7 @@ from exp.exp_basic import Exp_Basic
 from utils.tools import EarlyStopping, adjust_learning_rate, adjustment
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import accuracy_score
+from sklearn.metrics import confusion_matrix
 import torch.multiprocessing
 
 torch.multiprocessing.set_sharing_strategy('file_system')
@@ -128,73 +129,115 @@ class Exp_Anomaly_Detection(Exp_Basic):
     def test(self, setting, test=0):
         test_data, test_loader = self._get_data(flag='test')
         train_data, train_loader = self._get_data(flag='train')
+        vali_data, vali_loader = self._get_data(flag='val')
         if test:
             print('loading model')
             self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
 
-        attens_energy = []
         folder_path = './test_results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
+        metric_path = './results/' + setting + '/'
+        if not os.path.exists(metric_path):
+            os.makedirs(metric_path)
 
         self.model.eval()
-        self.anomaly_criterion = nn.MSELoss(reduce=False)
+        self.anomaly_criterion = nn.MSELoss(reduction='none')
 
-        # (1) stastic on the train set
-        with torch.no_grad():
-            for i, (batch_x, batch_y) in enumerate(train_loader):
-                batch_x = batch_x.float().to(self.device)
-                # reconstruction
-                outputs = self.model(batch_x, None, None, None)
-                # criterion
-                score = torch.mean(self.anomaly_criterion(batch_x, outputs), dim=-1)
-                score = score.detach().cpu().numpy()
-                attens_energy.append(score)
+        def _align_outputs(batch_x, outputs):
+            if isinstance(outputs, tuple):
+                outputs = outputs[0]
+            if outputs.shape[1] != batch_x.shape[1]:
+                outputs = outputs[:, -batch_x.shape[1]:, :]
+            if outputs.shape[-1] != batch_x.shape[-1]:
+                outputs = outputs[:, :, -batch_x.shape[-1]:]
+            return outputs
 
-        attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
-        train_energy = np.array(attens_energy)
+        def _collect_energy(loader):
+            point_energy = []
+            window_energy = []
+            point_labels = []
+            window_labels = []
+            with torch.no_grad():
+                for i, (batch_x, batch_y) in enumerate(loader):
+                    batch_x = batch_x.float().to(self.device)
+                    outputs = self.model(batch_x, None, None, None)
+                    outputs = _align_outputs(batch_x, outputs)
+                    score = torch.mean(self.anomaly_criterion(batch_x, outputs), dim=-1)
+                    score_np = score.detach().cpu().numpy()
+                    point_energy.append(score_np.reshape(-1))
+                    window_energy.append(score_np.mean(axis=1))
 
-        # (2) find the threshold
-        attens_energy = []
-        test_labels = []
-        for i, (batch_x, batch_y) in enumerate(test_loader):
-            batch_x = batch_x.float().to(self.device)
-            # reconstruction
-            outputs = self.model(batch_x, None, None, None)
-            # criterion
-            score = torch.mean(self.anomaly_criterion(batch_x, outputs), dim=-1)
-            score = score.detach().cpu().numpy()
-            attens_energy.append(score)
-            test_labels.append(batch_y)
+                    labels_np = batch_y.detach().cpu().numpy() if torch.is_tensor(batch_y) else np.asarray(batch_y)
+                    point_labels.append(labels_np.reshape(-1))
+                    if labels_np.ndim <= 1:
+                        win_label = labels_np.reshape(-1)
+                    else:
+                        axes = tuple(range(1, labels_np.ndim))
+                        win_label = labels_np.max(axis=axes)
+                    window_labels.append(win_label.reshape(-1))
 
-        attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
-        test_energy = np.array(attens_energy)
-        combined_energy = np.concatenate([train_energy, test_energy], axis=0)
-        threshold = np.percentile(combined_energy, 100 - self.args.anomaly_ratio)
+            return (
+                np.concatenate(point_energy, axis=0),
+                np.concatenate(window_energy, axis=0),
+                np.concatenate(point_labels, axis=0).astype(int),
+                np.concatenate(window_labels, axis=0).astype(int),
+            )
+
+        train_point_energy, train_window_energy, _, _ = _collect_energy(train_loader)
+        val_point_energy, val_window_energy, _, _ = _collect_energy(vali_loader)
+        test_point_energy, test_window_energy, test_point_labels, test_window_labels = _collect_energy(test_loader)
+
+        level = getattr(self.args, 'anomaly_level', 'point')
+        threshold_source = getattr(self.args, 'anomaly_threshold_source', 'combined')
+        threshold_percentile = float(getattr(self.args, 'anomaly_threshold_percentile', 99.0))
+
+        if level == 'window':
+            train_energy = train_window_energy
+            val_energy = val_window_energy
+            test_energy = test_window_energy
+            gt = test_window_labels
+        else:
+            train_energy = train_point_energy
+            val_energy = val_point_energy
+            test_energy = test_point_energy
+            gt = test_point_labels
+
+        if threshold_source == 'val':
+            threshold = np.percentile(val_energy, threshold_percentile)
+        elif threshold_source == 'train':
+            threshold = np.percentile(train_energy, threshold_percentile)
+        else:
+            combined_energy = np.concatenate([train_energy, test_energy], axis=0)
+            threshold = np.percentile(combined_energy, 100 - self.args.anomaly_ratio)
         print("Threshold :", threshold)
+        print("Threshold source: {}, percentile: {}, level: {}".format(
+            threshold_source, threshold_percentile, level))
 
-        # (3) evaluation on the test set
         pred = (test_energy > threshold).astype(int)
-        test_labels = np.concatenate(test_labels, axis=0).reshape(-1)
-        test_labels = np.array(test_labels)
-        gt = test_labels.astype(int)
+        gt = np.array(gt).astype(int)
 
         print("pred:   ", pred.shape)
         print("gt:     ", gt.shape)
 
-        # (4) detection adjustment
-        gt, pred = adjustment(gt, pred)
+        if level == 'point':
+            gt, pred = adjustment(gt, pred)
+            pred = np.array(pred)
+            gt = np.array(gt)
 
-        pred = np.array(pred)
-        gt = np.array(gt)
         print("pred: ", pred.shape)
         print("gt:   ", gt.shape)
 
         accuracy = accuracy_score(gt, pred)
-        precision, recall, f_score, support = precision_recall_fscore_support(gt, pred, average='binary')
+        precision, recall, f_score, support = precision_recall_fscore_support(
+            gt, pred, average='binary', zero_division=0)
+        tn, fp, fn, tp = confusion_matrix(gt, pred, labels=[0, 1]).ravel()
+        true_counts = np.bincount(gt.astype(int), minlength=2)
+        pred_counts = np.bincount(pred.astype(int), minlength=2)
         print("Accuracy : {:0.4f}, Precision : {:0.4f}, Recall : {:0.4f}, F-score : {:0.4f} ".format(
-            accuracy, precision,
-            recall, f_score))
+            accuracy, precision, recall, f_score))
+        print("true_counts: {}, pred_counts: {}, TN/FP/FN/TP: {}/{}/{}/{}".format(
+            true_counts.tolist(), pred_counts.tolist(), int(tn), int(fp), int(fn), int(tp)))
 
         f = open("result_anomaly_detection.txt", 'a')
         f.write(setting + "  \n")
@@ -204,4 +247,24 @@ class Exp_Anomaly_Detection(Exp_Basic):
         f.write('\n')
         f.write('\n')
         f.close()
+
+        with open(os.path.join(metric_path, 'anomaly_metrics.csv'), 'w') as f:
+            f.write('setting,accuracy,precision,recall,f1,true_counts,pred_counts,TN,FP,FN,TP,threshold,threshold_source,threshold_percentile,level\n')
+            f.write('{},{:.10f},{:.10f},{:.10f},{:.10f},"{}","{}",{},{},{},{},{:.10f},{},{:.4f},{}\n'.format(
+                setting,
+                float(accuracy),
+                float(precision),
+                float(recall),
+                float(f_score),
+                true_counts.tolist(),
+                pred_counts.tolist(),
+                int(tn),
+                int(fp),
+                int(fn),
+                int(tp),
+                float(threshold),
+                threshold_source,
+                threshold_percentile,
+                level,
+            ))
         return

@@ -1251,6 +1251,149 @@ class QARFlightDatasetShift(QARFlightDataset):
         return len(self.samples)
 
 
+class QARCompactAnomalyDataset(Dataset):
+    """
+    One-class anomaly-detection adapter for QAR compact caches.
+
+    The compact cache stores one flight/condition window per sample:
+        x:      (N, T, C)
+        mask:   (N, T)
+        labels: (N,), where 0 is normal and non-zero is abnormal/fault.
+
+    For anomaly detection we avoid using fault samples during training:
+        train: chronological first 70% of normal samples
+        val:   chronological next 10% of normal samples
+        test:  chronological last 20% of normal samples + all fault samples
+
+    Each long compact sequence is deterministically resampled to ``win_size``
+    points using evenly spaced indices over the whole condition window. This
+    keeps the full condition context while making reconstruction models cheap
+    enough to run across all QAR datasets.
+    """
+
+    NORMAL_SPLIT_RATIOS = (0.7, 0.1, 0.2)
+
+    def __init__(self, args, root_path, win_size, step=1, flag="train"):
+        self.args = args
+        self.root_path = root_path
+        self.win_size = int(win_size)
+        self.step = step
+        self.flag = str(flag).lower()
+        if self.flag in ('vali', 'valid', 'validation'):
+            self.flag = 'val'
+        if self.flag not in ('train', 'val', 'test'):
+            raise ValueError('QARCompactAnomalyDataset flag must be train/val/test, got {}'.format(flag))
+
+        data_path = getattr(args, 'data_path', 'qar_compact_shiftN80.npz')
+        cache_path = os.path.join(root_path, data_path)
+        if not os.path.isfile(cache_path):
+            cache_path = os.path.join(root_path, 'qar_compact_shiftN80.npz')
+        if not os.path.isfile(cache_path):
+            raise FileNotFoundError('QAR anomaly compact cache not found under {}'.format(root_path))
+
+        cache = np.load(cache_path, allow_pickle=False)
+        x = np.asarray(cache['x'], dtype=np.float32)
+        if x.ndim != 3:
+            raise ValueError('Expected compact x with shape (N,T,C), got {}'.format(x.shape))
+        self._x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+        self._labels = cache['labels'].astype(np.int64, copy=False) if 'labels' in cache.files else np.zeros(x.shape[0], dtype=np.int64)
+        if 'mask' in cache.files:
+            self._mask = np.asarray(cache['mask'], dtype=np.float32)
+        else:
+            self._mask = np.ones(x.shape[:2], dtype=np.float32)
+
+        if 'feature_cols' in cache.files:
+            self.feature_cols = cache['feature_cols'].astype(str).tolist()
+        else:
+            self.feature_cols = ['var_{}'.format(i) for i in range(x.shape[2])]
+        self.feature_df = pd.DataFrame(columns=self.feature_cols)
+        self.max_seq_len = self.win_size
+        self.class_names = ['0', '1']
+
+        if 'sources' in cache.files:
+            self._sources = cache['sources'].astype(str)
+        else:
+            self._sources = np.asarray([str(i) for i in range(self._labels.shape[0])])
+        if 'time_keys' in cache.files:
+            self._time_keys = cache['time_keys'].astype(np.int64, copy=False)
+        else:
+            self._time_keys = np.asarray([qar_time_key_int(src) for src in self._sources], dtype=np.int64)
+
+        all_indices = np.arange(self._labels.shape[0], dtype=np.int64)
+        normal_indices = all_indices[self._labels == 0]
+        fault_indices = all_indices[self._labels != 0]
+
+        normal_sorted = sorted(
+            normal_indices.tolist(),
+            key=lambda i: (int(self._time_keys[int(i)]), str(self._sources[int(i)]), int(i)),
+        )
+        n_normal = len(normal_sorted)
+        train_end = int(n_normal * self.NORMAL_SPLIT_RATIOS[0])
+        val_end = int(n_normal * (self.NORMAL_SPLIT_RATIOS[0] + self.NORMAL_SPLIT_RATIOS[1]))
+        if n_normal > 0:
+            train_end = max(1, train_end)
+            val_end = max(train_end + 1, val_end) if n_normal >= 3 else n_normal
+            val_end = min(val_end, n_normal)
+
+        if self.flag == 'train':
+            selected = normal_sorted[:train_end]
+        elif self.flag == 'val':
+            selected = normal_sorted[train_end:val_end]
+            if not selected:
+                selected = normal_sorted[max(0, train_end - 1):train_end]
+        else:
+            normal_test = normal_sorted[val_end:]
+            fault_sorted = sorted(
+                fault_indices.tolist(),
+                key=lambda i: (int(self._time_keys[int(i)]), str(self._sources[int(i)]), int(i)),
+            )
+            selected = sorted(
+                normal_test + fault_sorted,
+                key=lambda i: (int(self._time_keys[int(i)]), str(self._sources[int(i)]), int(i)),
+            )
+
+        self.samples = np.asarray(selected, dtype=np.int64)
+        if self.samples.size == 0:
+            raise ValueError('No QAR anomaly samples for flag={} in {}'.format(self.flag, cache_path))
+
+        selected_labels = (self._labels[self.samples] != 0).astype(np.int64)
+        counts = np.bincount(selected_labels, minlength=2)
+        first_i = int(self.samples[0])
+        last_i = int(self.samples[-1])
+        print('{} samples: {} (QAR anomaly cache: {}, x_shape={}, seq_len={}, normal/fault={}, time_range={}..{})'.format(
+            self.flag,
+            int(self.samples.size),
+            cache_path,
+            tuple(self._x.shape),
+            self.win_size,
+            counts.tolist(),
+            int(self._time_keys[first_i]),
+            int(self._time_keys[last_i]),
+        ))
+
+    def _resample(self, seq):
+        t_len = seq.shape[0]
+        if t_len == self.win_size:
+            return seq.astype(np.float32, copy=False)
+        if t_len > self.win_size:
+            idx = np.linspace(0, t_len - 1, self.win_size)
+            idx = np.rint(idx).astype(np.int64)
+            return seq[idx].astype(np.float32, copy=False)
+        out = np.zeros((self.win_size, seq.shape[1]), dtype=np.float32)
+        out[:t_len] = seq
+        return out
+
+    def __getitem__(self, index):
+        cache_idx = int(self.samples[index])
+        seq = self._resample(self._x[cache_idx])
+        label = 1 if int(self._labels[cache_idx]) != 0 else 0
+        label_seq = np.full((self.win_size,), label, dtype=np.float32)
+        return seq, label_seq
+
+    def __len__(self):
+        return int(self.samples.size)
+
+
 class QARCompactForecastDataset(Dataset):
     """
     Forecasting adapter for QAR compact caches.
