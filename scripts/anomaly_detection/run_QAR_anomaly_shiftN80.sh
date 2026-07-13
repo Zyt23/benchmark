@@ -12,6 +12,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 COMPACT_ROOT="${COMPACT_ROOT:-datasetall_tsfile_compact_custom_cls_chrono_20260711}"
 RUN_TAG="${RUN_TAG:-qar_anomaly_oneclass_$(date +%Y%m%d_%H%M%S)}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
+IS_TRAINING="${IS_TRAINING:-1}"
 DATASETS="${DATASETS:-dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14}"
 MODELS="${MODELS:-Transformer TimesNet PatchTST DLinear iTransformer}"
 
@@ -61,7 +62,7 @@ PY
     echo "[run] dataset=${dataset} model=${model} enc_in=${enc_in} log=${log_file}"
     CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}" "${PYTHON_BIN}" -u run.py \
       --task_name anomaly_detection \
-      --is_training 1 \
+      --is_training "${IS_TRAINING}" \
       --model_id "${RUN_TAG}_${dataset}" \
       --model "${model}" \
       --data QAR_anomaly \

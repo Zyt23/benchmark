@@ -5,11 +5,13 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 RUN_TAG="${RUN_TAG:-qar_anomaly_oneclass_$(date +%Y%m%d_%H%M%S)}"
 COMPACT_ROOT="${COMPACT_ROOT:-datasetall_tsfile_compact_custom_cls_chrono_20260711}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
+IS_TRAINING="${IS_TRAINING:-1}"
 SEQ_LEN="${SEQ_LEN:-200}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
 TRAIN_EPOCHS="${TRAIN_EPOCHS:-5}"
 PATIENCE="${PATIENCE:-2}"
 NUM_WORKERS="${NUM_WORKERS:-0}"
+THRESHOLD_PERCENTILE="${THRESHOLD_PERCENTILE:-99.0}"
 
 cd "${PROJECT_ROOT}" || exit 1
 mkdir -p experiment_artifacts logs/anomaly_detection
@@ -28,6 +30,7 @@ start_shard() {
     export DATASETS="${datasets}"
     export COMPACT_ROOT="${COMPACT_ROOT}"
     export PYTHON_BIN="${PYTHON_BIN}"
+    export IS_TRAINING="${IS_TRAINING}"
     export CUDA_DEVICE="${cuda_device}"
     export LOCAL_GPU=0
     export SEQ_LEN="${SEQ_LEN}"
@@ -35,6 +38,7 @@ start_shard() {
     export TRAIN_EPOCHS="${TRAIN_EPOCHS}"
     export PATIENCE="${PATIENCE}"
     export NUM_WORKERS="${NUM_WORKERS}"
+    export THRESHOLD_PERCENTILE="${THRESHOLD_PERCENTILE}"
     bash scripts/anomaly_detection/run_QAR_anomaly_shiftN80.sh
   ) > "${log_file}" 2>&1 < /dev/null &
   echo $! > "experiment_artifacts/${RUN_TAG}_shard${shard_id}.pid"
