@@ -26,7 +26,8 @@ E_LAYERS="${E_LAYERS:-2}"
 N_HEADS="${N_HEADS:-4}"
 THRESHOLD_PERCENTILE="${THRESHOLD_PERCENTILE:-99.0}"
 NUM_WORKERS="${NUM_WORKERS:-0}"
-GPU="${GPU:-0}"
+CUDA_DEVICE="${CUDA_DEVICE:-${GPU:-0}}"
+LOCAL_GPU="${LOCAL_GPU:-0}"
 
 SUMMARY_DIR="${SUMMARY_DIR:-logs/anomaly_detection/${RUN_TAG}}"
 mkdir -p "${SUMMARY_DIR}"
@@ -58,7 +59,7 @@ PY
   for model in ${MODELS}; do
     log_file="${SUMMARY_DIR}/${dataset}_${model}.log"
     echo "[run] dataset=${dataset} model=${model} enc_in=${enc_in} log=${log_file}"
-    "${PYTHON_BIN}" -u run.py \
+    CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}" "${PYTHON_BIN}" -u run.py \
       --task_name anomaly_detection \
       --is_training 1 \
       --model_id "${RUN_TAG}_${dataset}" \
@@ -83,7 +84,7 @@ PY
       --patience "${PATIENCE}" \
       --learning_rate "${LEARNING_RATE}" \
       --num_workers "${NUM_WORKERS}" \
-      --gpu "${GPU}" \
+      --gpu "${LOCAL_GPU}" \
       --des oneclass_val_threshold \
       --anomaly_threshold_source val \
       --anomaly_threshold_percentile "${THRESHOLD_PERCENTILE}" \
