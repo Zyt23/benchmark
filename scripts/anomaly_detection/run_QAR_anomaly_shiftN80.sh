@@ -9,8 +9,9 @@ set -u
 # thresholding.
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
-COMPACT_ROOT="${COMPACT_ROOT:-datasetall_tsfile_compact_custom_conditions_chrono_20260711}"
+COMPACT_ROOT="${COMPACT_ROOT:-datasetall_tsfile_compact_custom_cls_chrono_20260711}"
 RUN_TAG="${RUN_TAG:-qar_anomaly_oneclass_$(date +%Y%m%d_%H%M%S)}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
 DATASETS="${DATASETS:-dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14}"
 MODELS="${MODELS:-Transformer TimesNet PatchTST DLinear iTransformer}"
 
@@ -47,7 +48,7 @@ for dataset in ${DATASETS}; do
     continue
   fi
 
-  enc_in=$(python - <<PY
+  enc_in=$("${PYTHON_BIN}" - <<PY
 import numpy as np
 c = np.load(r"${cache_path}", allow_pickle=False)
 print(int(c["x"].shape[2]))
@@ -57,7 +58,7 @@ PY
   for model in ${MODELS}; do
     log_file="${SUMMARY_DIR}/${dataset}_${model}.log"
     echo "[run] dataset=${dataset} model=${model} enc_in=${enc_in} log=${log_file}"
-    python -u run.py \
+    "${PYTHON_BIN}" -u run.py \
       --task_name anomaly_detection \
       --is_training 1 \
       --model_id "${RUN_TAG}_${dataset}" \
