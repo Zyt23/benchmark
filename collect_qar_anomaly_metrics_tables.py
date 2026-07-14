@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """Collect QAR one-class anomaly-detection metrics into dataset/model tables."""
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 
-MODELS = ["Transformer", "TimesNet", "PatchTST", "DLinear", "iTransformer"]
+DEFAULT_MODELS = ["Transformer", "TimesNet", "PatchTST", "DLinear", "iTransformer"]
 
 
 DATASET_NAMES = {
@@ -29,12 +30,13 @@ DATASET_NAMES = {
 }
 
 
-def parse_setting(setting: str, run_tag: str) -> tuple[str, str] | None:
+def parse_setting(setting: str, run_tag: str, models: list[str]) -> tuple[str, str] | None:
     prefix = f"anomaly_detection_{run_tag}_"
     if not setting.startswith(prefix):
         return None
     rest = setting[len(prefix):]
-    for model in MODELS:
+    # Longer model names first avoids accidental substring matches.
+    for model in sorted(models, key=len, reverse=True):
         marker = f"_{model}_QAR_anomaly_"
         if marker in rest:
             dataset = rest.split(marker, 1)[0]
@@ -47,8 +49,7 @@ def read_metric(path: Path) -> dict | None:
         rows = list(csv.DictReader(f))
     if not rows:
         return None
-    row = rows[-1]
-    return row
+    return rows[-1]
 
 
 def main() -> None:
@@ -57,7 +58,7 @@ def main() -> None:
     parser.add_argument("--results_root", default="results")
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--datasets", nargs="*", default=list(DATASET_NAMES))
-    parser.add_argument("--models", nargs="*", default=MODELS)
+    parser.add_argument("--models", nargs="*", default=DEFAULT_MODELS)
     args = parser.parse_args()
 
     results_root = Path(args.results_root)
@@ -70,36 +71,37 @@ def main() -> None:
         row = read_metric(metric_path)
         if not row:
             continue
-        parsed = parse_setting(row.get("setting", metric_path.parent.name), args.run_tag)
+        parsed = parse_setting(row.get("setting", metric_path.parent.name), args.run_tag, args.models)
         if parsed is None:
-            parsed = parse_setting(metric_path.parent.name, args.run_tag)
+            parsed = parse_setting(metric_path.parent.name, args.run_tag, args.models)
         if parsed is None:
             continue
         dataset, model = parsed
         if dataset not in args.datasets or model not in args.models:
             continue
-        record = {
-            "dataset": dataset,
-            "fault": DATASET_NAMES.get(dataset, ""),
-            "model": model,
-            "accuracy": float(row["accuracy"]),
-            "precision": float(row["precision"]),
-            "recall": float(row["recall"]),
-            "f1": float(row["f1"]),
-            "true_counts": row["true_counts"],
-            "pred_counts": row["pred_counts"],
-            "TN": int(row["TN"]),
-            "FP": int(row["FP"]),
-            "FN": int(row["FN"]),
-            "TP": int(row["TP"]),
-            "threshold": float(row["threshold"]),
-            "threshold_source": row["threshold_source"],
-            "threshold_percentile": float(row["threshold_percentile"]),
-            "level": row["level"],
-            "setting": row["setting"],
-            "metric_file": str(metric_path),
-        }
-        records.append(record)
+        records.append(
+            {
+                "dataset": dataset,
+                "fault": DATASET_NAMES.get(dataset, ""),
+                "model": model,
+                "accuracy": float(row["accuracy"]),
+                "precision": float(row["precision"]),
+                "recall": float(row["recall"]),
+                "f1": float(row["f1"]),
+                "true_counts": row["true_counts"],
+                "pred_counts": row["pred_counts"],
+                "TN": int(row["TN"]),
+                "FP": int(row["FP"]),
+                "FN": int(row["FN"]),
+                "TP": int(row["TP"]),
+                "threshold": float(row["threshold"]),
+                "threshold_source": row["threshold_source"],
+                "threshold_percentile": float(row["threshold_percentile"]),
+                "level": row["level"],
+                "setting": row["setting"],
+                "metric_file": str(metric_path),
+            }
+        )
 
     if not records:
         raise SystemExit(f"No anomaly metrics found for run_tag={args.run_tag!r} under {results_root}")
@@ -118,16 +120,28 @@ def main() -> None:
     readme = output_dir / "README.md"
     with readme.open("w", encoding="utf-8") as f:
         f.write("# QAR one-class anomaly detection\n\n")
-        f.write("实验设置：训练和验证只使用正常类 0；测试使用保留正常类 + 全部故障类 1。")
-        f.write("异常分数为重构误差，阈值来自正常验证集 99% 分位；指标按整条工况窗口/window 计算。\n\n")
+        f.write("实验设置：训练和验证只使用正常类 0；测试使用保留正常类 + 全部故障类 1。\n")
+        f.write("异常分数为重构误差，阈值来自正常验证集分位数；指标按整条工况窗口/window 计算。\n\n")
         f.write(f"- run_tag: `{args.run_tag}`\n")
         f.write(f"- all metrics: `{all_csv.name}`\n\n")
         for dataset in args.datasets:
             sub = df[df["dataset"] == dataset]
             if sub.empty:
                 continue
-            f.write(f"## {dataset}：{DATASET_NAMES.get(dataset, '')}\n\n")
-            cols = ["model", "accuracy", "precision", "recall", "f1", "true_counts", "pred_counts", "TN", "FP", "FN", "TP"]
+            f.write(f"## {dataset}: {DATASET_NAMES.get(dataset, '')}\n\n")
+            cols = [
+                "model",
+                "accuracy",
+                "precision",
+                "recall",
+                "f1",
+                "true_counts",
+                "pred_counts",
+                "TN",
+                "FP",
+                "FN",
+                "TP",
+            ]
             f.write(sub[cols].to_markdown(index=False))
             f.write("\n\n")
 
