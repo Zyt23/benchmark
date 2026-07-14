@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import os
 from layers.Transformer_EncDec import Encoder, EncoderLayer
 from layers.SelfAttention_Family import FullAttention, AttentionLayer
 from layers.Embed import PatchEmbedding
@@ -13,7 +14,8 @@ class Model(nn.Module):
         stride: int, stride for patch_embedding
         """
         super().__init__()
-        self.model = BaseChronosPipeline.from_pretrained("amazon/chronos-2", device_map="cuda")
+        model_path = os.environ.get("CHRONOS2_MODEL_PATH", "amazon/chronos-2")
+        self.model = BaseChronosPipeline.from_pretrained(model_path, device_map="cuda")
         self.task_name = configs.task_name
         self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
