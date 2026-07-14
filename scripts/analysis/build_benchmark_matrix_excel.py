@@ -108,11 +108,11 @@ PENDING_REASON = {
 }
 
 FORECAST_LABELS = {
-    "predict_2_3": "2→3",
-    "predict_4_5": "4→5",
-    "predict_5_6": "5→6",
-    "predict_8_9": "8→9",
-    "phase80": "0→12起点80",
+    "predict_2_3": "2->3",
+    "predict_4_5": "4->5",
+    "predict_5_6": "5->6",
+    "predict_8_9": "8->9",
+    "phase80": "0->12起点80",
     "default": "forecast",
 }
 
