@@ -24,13 +24,14 @@ class Model(nn.Module):
         self.num_class = int(getattr(configs, "num_class", 2))
         self.d_model = int(getattr(configs, "d_model", 64))
         self.dropout = float(getattr(configs, "dropout", 0.1))
+        self.max_len = min(self.seq_len, int(getattr(configs, "vsformer_max_len", 256)))
 
         half = max(8, self.d_model // 2)
         self.value_proj = nn.Linear(self.enc_in, half)
         self.shape_proj = nn.Linear(self.enc_in, half)
         self.fuse = nn.Linear(half * 2, self.d_model)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
-        self.pos_embedding = nn.Parameter(torch.randn(1, self.seq_len + 1, self.d_model) * 0.02)
+        self.pos_embedding = nn.Parameter(torch.randn(1, self.max_len + 1, self.d_model) * 0.02)
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.d_model,
@@ -54,6 +55,10 @@ class Model(nn.Module):
         return diff
 
     def classification(self, x_enc: torch.Tensor) -> torch.Tensor:
+        if x_enc.shape[1] > self.max_len:
+            x_enc = torch.nn.functional.adaptive_avg_pool1d(
+                x_enc.transpose(1, 2), self.max_len
+            ).transpose(1, 2)
         value = self.value_proj(x_enc)
         shape = self.shape_proj(self._shape_signal(x_enc))
         x = self.fuse(torch.cat([value, shape], dim=-1))
