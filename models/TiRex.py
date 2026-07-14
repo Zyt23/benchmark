@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import os
 from layers.Transformer_EncDec import Encoder, EncoderLayer
 from layers.SelfAttention_Family import FullAttention, AttentionLayer
 from layers.Embed import PatchEmbedding
@@ -13,7 +14,9 @@ class Model(nn.Module):
         stride: int, stride for patch_embedding
         """
         super().__init__()
-        self.model = load_model("NX-AI/TiRex")
+        model_path = os.environ.get("TIREX_MODEL_PATH", "NX-AI/TiRex")
+        device = str(getattr(configs, "device", "cuda:0" if torch.cuda.is_available() else "cpu"))
+        self.model = load_model(model_path, device=device, backend=os.environ.get("TIREX_BACKEND", "torch"))
         self.task_name = configs.task_name
         self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
