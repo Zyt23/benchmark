@@ -7,16 +7,18 @@ CLS_ROOT="${CLS_ROOT:-datasetall_tsfile_compact_custom_cls_chrono_20260711}"
 LOG_ROOT="${LOG_ROOT:-experiment_artifacts/QAR_benchmark_matrix_20260714/server_logs}"
 DATASETS_ALL="${DATASETS_ALL:-dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14}"
 MODELS_EXTRA="${MODELS_EXTRA:-LITE}"
+RUN_TAG="${RUN_TAG:-matrix_cls_lite_20260714}"
+LOG_SUFFIX="${LOG_SUFFIX:-lite}"
 
 cd "${PROJECT_ROOT}"
 mkdir -p "${LOG_ROOT}"
 
-log="${LOG_ROOT}/classification_lite.log"
-pid_file="${LOG_ROOT}/classification_lite.pid"
-echo "[launch] LITE classification -> ${log}"
+log="${LOG_ROOT}/classification_${LOG_SUFFIX}.log"
+pid_file="${LOG_ROOT}/classification_${LOG_SUFFIX}.pid"
+echo "[launch] ${MODELS_EXTRA} classification -> ${log}"
 (
   env \
-    RUN_TAG="${RUN_TAG:-matrix_cls_lite_20260714}" \
+    RUN_TAG="${RUN_TAG}" \
     DATASETS="${DATASETS_ALL}" \
     MODELS="${MODELS_EXTRA}" \
     COMPACT_ROOT="${CLS_ROOT}" \
