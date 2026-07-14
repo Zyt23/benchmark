@@ -26,6 +26,9 @@ if __name__ == '__main__':
     parser.add_argument('--data', type=str, required=True, default='ETTh1', help='dataset type')
     parser.add_argument('--root_path', type=str, default='./data/ETT/', help='root path of the data file')
     parser.add_argument('--data_path', type=str, default='ETTh1.csv', help='data file')
+    parser.add_argument('--qar_split_strategy', type=str, default='chrono',
+                        choices=['chrono', 'per_class_chrono'],
+                        help='QAR compact split strategy: global chronological or per-class chronological 70/10/20')
     parser.add_argument('--phase_a_shift', type=str, default='0',
                         help='段A(FLIGHT_PHASE 2->3)切换点偏移量, 仅 QAR_shift 生效。'
                              '整数(固定偏移, 如 -100/100) 或 "min,max"(随机区间, 如 "-100,100")')

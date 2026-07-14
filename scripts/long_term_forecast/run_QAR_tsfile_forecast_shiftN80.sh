@@ -14,8 +14,6 @@ RUN_TAG="${RUN_TAG:-tsfile_forecast_shiftN80_$(date +%Y%m%d_%H%M%S)}"
 SEQ_LEN="${SEQ_LEN:-60}"
 LABEL_LEN="${LABEL_LEN:-20}"
 PRED_LEN="${PRED_LEN:-20}"
-FORECAST_STRIDE="${FORECAST_STRIDE:-80}"
-FORECAST_WINDOW_MODE="${FORECAST_WINDOW_MODE:-segment}"
 TRAIN_EPOCHS="${TRAIN_EPOCHS:-20}"
 PATIENCE="${PATIENCE:-3}"
 BATCH_SIZE="${BATCH_SIZE:-128}"
@@ -26,6 +24,7 @@ DEVICES="${DEVICES:-0,1}"
 USE_MULTI_GPU="${USE_MULTI_GPU:-1}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 SAVE_EPOCH_CHECKPOINTS="${SAVE_EPOCH_CHECKPOINTS:-0}"
+QAR_SPLIT_STRATEGY="${QAR_SPLIT_STRATEGY:-per_class_chrono}"
 
 D_MODEL="${D_MODEL:-64}"
 D_FF="${D_FF:-128}"
@@ -56,11 +55,11 @@ echo "Compact root: ${COMPACT_ROOT}"
 echo "Datasets: ${DATASETS}"
 echo "Models: ${MODELS}"
 echo "Window: seq_len=${SEQ_LEN}, label_len=${LABEL_LEN}, pred_len=${PRED_LEN}"
-echo "Forecast window mode: ${FORECAST_WINDOW_MODE}, stride=${FORECAST_STRIDE}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 echo "USE_MULTI_GPU: ${USE_MULTI_GPU}"
 echo "Checkpoints: ${CHECKPOINTS}"
 echo "Logs: ${LOG_DIR}"
+echo "QAR_SPLIT_STRATEGY: ${QAR_SPLIT_STRATEGY}"
 
 GPU_ARGS=()
 if [[ "${USE_MULTI_GPU}" != "0" ]]; then
@@ -94,6 +93,7 @@ PY
       --task_name long_term_forecast \
       --is_training 1 \
       --root_path "${root_path}" \
+      --qar_split_strategy "${QAR_SPLIT_STRATEGY}" \
       --data_path qar_compact_shiftN80.npz \
       --model_id "${model_id}" \
       --model "${model}" \
@@ -104,8 +104,6 @@ PY
       --seq_len "${SEQ_LEN}" \
       --label_len "${LABEL_LEN}" \
       --pred_len "${PRED_LEN}" \
-      --forecast_stride "${FORECAST_STRIDE}" \
-      --forecast_window_mode "${FORECAST_WINDOW_MODE}" \
       --enc_in "${feature_count}" \
       --dec_in "${feature_count}" \
       --c_out "${feature_count}" \

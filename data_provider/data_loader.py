@@ -956,6 +956,56 @@ class QARFlightDataset(Dataset):
             return items[val_end:]
         raise ValueError('Unsupported QAR split flag: {}'.format(flag))
 
+    @classmethod
+    def _split_bounds_keep_test(cls, n):
+        """70/10/20 split bounds while keeping a non-empty test split when possible."""
+        n = int(n)
+        if n <= 0:
+            return 0, 0
+        if n == 1:
+            return 0, 0
+        if n == 2:
+            return 1, 1
+        train_end = int(n * cls.SPLIT_RATIOS[0])
+        val_end = int(n * (cls.SPLIT_RATIOS[0] + cls.SPLIT_RATIOS[1]))
+        train_end = max(1, min(train_end, n - 2))
+        val_end = max(train_end + 1, min(val_end, n - 1))
+        return train_end, val_end
+
+    @classmethod
+    def _split_by_flag_per_class(cls, items, flag, label_fn, key_fn=None):
+        """Per-class chronological TRAIN/VAL/TEST split.
+
+        Each label is sorted independently and split 70/10/20.  This guarantees
+        that the TEST split contains samples from every class that exists in the
+        dataset whenever that class has at least one sample, while still keeping
+        train/val/test sample sets disjoint.
+        """
+        flag = str(flag).upper()
+        groups = {}
+        for item in list(items):
+            groups.setdefault(int(label_fn(item)), []).append(item)
+
+        selected = []
+        for _, group in sorted(groups.items(), key=lambda kv: kv[0]):
+            if key_fn is not None:
+                group = sorted(group, key=key_fn)
+            else:
+                group = list(group)
+            train_end, val_end = cls._split_bounds_keep_test(len(group))
+            if flag == 'TRAIN':
+                selected.extend(group[:train_end])
+            elif flag in ('VAL', 'VALI', 'VALID', 'VALIDATION'):
+                selected.extend(group[train_end:val_end])
+            elif flag == 'TEST':
+                selected.extend(group[val_end:])
+            else:
+                raise ValueError('Unsupported QAR split flag: {}'.format(flag))
+
+        if key_fn is not None:
+            selected = sorted(selected, key=key_fn)
+        return selected
+
     def __init__(self, args, root_path, flag='TRAIN'):
         self.args = args
         self.root_path = root_path
@@ -987,11 +1037,20 @@ class QARFlightDataset(Dataset):
             label = int(cls)
             for f in files_per_class[cls]:
                 all_samples.append((f, label))
-        self.samples = self._split_by_flag(
-            all_samples,
-            self.flag,
-            key_fn=lambda item: qar_time_sort_key(item[0]),
-        )
+        split_strategy = getattr(args, 'qar_split_strategy', 'chrono')
+        if split_strategy == 'per_class_chrono':
+            self.samples = self._split_by_flag_per_class(
+                all_samples,
+                self.flag,
+                label_fn=lambda item: item[1],
+                key_fn=lambda item: qar_time_sort_key(item[0]),
+            )
+        else:
+            self.samples = self._split_by_flag(
+                all_samples,
+                self.flag,
+                key_fn=lambda item: qar_time_sort_key(item[0]),
+            )
 
         # 兼容 _build_model 所需属性
         self.max_seq_len = self.SEQ_LEN
@@ -1154,11 +1213,20 @@ class QARFlightDatasetShift(QARFlightDataset):
                     )
 
                 all_indices = np.arange(self._compact_labels.shape[0], dtype=np.int64)
-                self.samples = self._split_by_flag(
-                    all_indices,
-                    self.flag,
-                    key_fn=lambda i: (int(self._compact_time_keys[int(i)]), str(self._compact_sources[int(i)]), int(i)),
-                )
+                split_strategy = getattr(args, 'qar_split_strategy', 'chrono')
+                if split_strategy == 'per_class_chrono':
+                    self.samples = self._split_by_flag_per_class(
+                        all_indices,
+                        self.flag,
+                        label_fn=lambda i: int(self._compact_labels[int(i)]),
+                        key_fn=lambda i: (int(self._compact_time_keys[int(i)]), str(self._compact_sources[int(i)]), int(i)),
+                    )
+                else:
+                    self.samples = self._split_by_flag(
+                        all_indices,
+                        self.flag,
+                        key_fn=lambda i: (int(self._compact_time_keys[int(i)]), str(self._compact_sources[int(i)]), int(i)),
+                    )
                 self._using_compact_cache = True
                 if self.samples:
                     first_i = int(self.samples[0])
@@ -1481,11 +1549,20 @@ class QARCompactForecastDataset(Dataset):
             self._time_keys = np.asarray([qar_time_key_int(src) for src in self._sources], dtype=np.int64)
 
         valid_indices = np.flatnonzero(valid_prefix)
-        selected = QARFlightDataset._split_by_flag(
-            valid_indices,
-            self.flag,
-            key_fn=lambda i: (int(self._time_keys[int(i)]), str(self._sources[int(i)]), int(i)),
-        )
+        split_strategy = getattr(args, 'qar_split_strategy', 'chrono')
+        if split_strategy == 'per_class_chrono':
+            selected = QARFlightDataset._split_by_flag_per_class(
+                valid_indices,
+                self.flag,
+                label_fn=lambda i: int(labels[int(i)]),
+                key_fn=lambda i: (int(self._time_keys[int(i)]), str(self._sources[int(i)]), int(i)),
+            )
+        else:
+            selected = QARFlightDataset._split_by_flag(
+                valid_indices,
+                self.flag,
+                key_fn=lambda i: (int(self._time_keys[int(i)]), str(self._sources[int(i)]), int(i)),
+            )
         self.samples = np.asarray(selected, dtype=np.int64)
         if len(self.samples) == 0:
             raise ValueError(

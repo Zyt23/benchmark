@@ -14,6 +14,7 @@ USE_MULTI_GPU="${USE_MULTI_GPU:-1}"
 SAVE_EPOCH_CHECKPOINTS="${SAVE_EPOCH_CHECKPOINTS:-0}"
 CLASS_WEIGHT="${CLASS_WEIGHT:-balanced}"
 EARLY_STOP_METRIC="${EARLY_STOP_METRIC:-macro_f1}"
+QAR_SPLIT_STRATEGY="${QAR_SPLIT_STRATEGY:-per_class_chrono}"
 COMPACT_ROOT="${COMPACT_ROOT:-./datasetall_compact}"
 CHECKPOINTS="${CHECKPOINTS:-./checkpoints_datasetall/${RUN_TAG}}"
 LOG_DIR="${LOG_DIR:-./logs/datasetall/${RUN_TAG}}"
@@ -38,6 +39,7 @@ echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 echo "USE_MULTI_GPU: ${USE_MULTI_GPU}"
 echo "CLASS_WEIGHT: ${CLASS_WEIGHT}"
 echo "EARLY_STOP_METRIC: ${EARLY_STOP_METRIC}"
+echo "QAR_SPLIT_STRATEGY: ${QAR_SPLIT_STRATEGY}"
 echo "Checkpoints: ${CHECKPOINTS}"
 echo "Logs: ${LOG_DIR}"
 
@@ -65,6 +67,7 @@ for dataset in ${DATASETS}; do
       --task_name classification \
       --is_training 1 \
       --root_path "${root_path}" \
+      --qar_split_strategy "${QAR_SPLIT_STRATEGY}" \
       --model_id "${model_id}" \
       --model "${model}" \
       --data QAR_shift \
