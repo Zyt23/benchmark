@@ -299,7 +299,12 @@ class Model(nn.Module):
                                   padding_mode='circular',
                                   bias=False)
         else:
-            return x_enc, x_mark_enc
+            # Keep the downstream multi-scale code path consistent even when no
+            # down-sampling method is configured.  Returning a raw tensor here
+            # makes ``for x in x_enc`` iterate over the batch dimension and
+            # turns each sample into a 2-D tensor, which breaks QAR forecasting
+            # with ``ValueError: not enough values to unpack``.
+            return [x_enc], [x_mark_enc] if x_mark_enc is not None else None
         # B,T,C -> B,C,T
         x_enc = x_enc.permute(0, 2, 1)
 
