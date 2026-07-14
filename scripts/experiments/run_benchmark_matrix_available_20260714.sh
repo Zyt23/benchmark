@@ -20,6 +20,7 @@ STAGE="${STAGE:-all}"
 FULLSHOT_MODELS_AVAILABLE="${FULLSHOT_MODELS_AVAILABLE:-TimeMixer TimeXer iTransformer DLinear PatchTST TimesNet Autoformer}"
 CLASS_MODELS_AVAILABLE="${CLASS_MODELS_AVAILABLE:-MambaSingleLayer TimesNet PatchTST DLinear iTransformer}"
 ANOMALY_MODELS_AVAILABLE="${ANOMALY_MODELS_AVAILABLE:-KANAD AnomalyTransformer TranAD USAD OmniAnomaly}"
+FORECAST_GPU_LIST="${FORECAST_GPU_LIST:-4 1 2 3}"
 
 cd "${PROJECT_ROOT}"
 mkdir -p "${LOG_ROOT}"
@@ -34,7 +35,11 @@ launch() {
 }
 
 if [[ "${STAGE}" == "all" || "${STAGE}" == "forecast" ]]; then
+  read -r -a forecast_gpus <<< "${FORECAST_GPU_LIST}"
+  anchor_idx=0
   for anchor in ${FORECAST_ANCHORS}; do
+    gpu="${forecast_gpus[$((anchor_idx % ${#forecast_gpus[@]}))]}"
+    anchor_idx=$((anchor_idx + 1))
     launch "fullshot_forecast_${anchor}" env \
       RUN_TAG="matrix_fullshot_${anchor}_20260714" \
       DATASETS="${DATASETS_ALL}" \
@@ -42,7 +47,7 @@ if [[ "${STAGE}" == "all" || "${STAGE}" == "forecast" ]]; then
       COMPACT_ROOT="${FORECAST_ROOT}/${anchor}" \
       QAR_SPLIT_STRATEGY="${QAR_SPLIT_STRATEGY}" \
       PYTHON="${PYTHON}" \
-      CUDA_DEVICES="${FORECAST_CUDA_DEVICES:-4}" \
+      CUDA_DEVICES="${FORECAST_CUDA_DEVICES:-${gpu}}" \
       USE_MULTI_GPU=0 \
       BATCH_SIZE="${FORECAST_BATCH_SIZE:-128}" \
       TRAIN_EPOCHS="${FORECAST_TRAIN_EPOCHS:-5}" \
