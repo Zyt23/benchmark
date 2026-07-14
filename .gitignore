@@ -189,3 +189,4 @@ environment.txt
 # External pretrained weights / model caches used for offline benchmark runs.
 /external_models/
 *.safetensors
+/tmp_external_models/
