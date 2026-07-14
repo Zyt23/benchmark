@@ -54,6 +54,9 @@ class MultiScaleSeasonMixing(nn.Module):
 
     def forward(self, season_list):
 
+        if len(season_list) <= 1:
+            return [season_list[0].permute(0, 2, 1)]
+
         # mixing high->low
         out_high = season_list[0]
         out_low = season_list[1]
@@ -95,6 +98,9 @@ class MultiScaleTrendMixing(nn.Module):
             ])
 
     def forward(self, trend_list):
+
+        if len(trend_list) <= 1:
+            return [trend_list[0].permute(0, 2, 1)]
 
         # mixing low->high
         trend_list_reverse = trend_list.copy()
