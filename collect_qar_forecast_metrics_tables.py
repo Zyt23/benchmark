@@ -10,7 +10,20 @@ import pandas as pd
 
 
 METRIC_NAMES = ["mae", "mse", "rmse", "mape", "mspe"]
-MODEL_ORDER = ["Transformer", "TimesNet", "PatchTST", "DLinear", "iTransformer"]
+MODEL_ORDER = [
+    "OLinear",
+    "xPatch",
+    "TimeMixer++",
+    "DUET",
+    "TimeMixer",
+    "TimeXer",
+    "iTransformer",
+    "DLinear",
+    "PatchTST",
+    "TimesNet",
+    "Autoformer",
+    "Transformer",
+]
 
 
 def parse_args():
@@ -96,8 +109,8 @@ def make_markdown_table(df):
 
 def model_sort_key(model):
     if model in MODEL_ORDER:
-        return MODEL_ORDER.index(model)
-    return len(MODEL_ORDER), model
+        return (MODEL_ORDER.index(model), "")
+    return (len(MODEL_ORDER), str(model))
 
 
 def natural_dataset_key(name):
