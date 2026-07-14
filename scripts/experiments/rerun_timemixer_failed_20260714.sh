@@ -5,7 +5,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 PYTHON="${PYTHON:-/home/para/anaconda3/bin/python}"
 FORECAST_ROOT="${FORECAST_ROOT:-datasetall_tsfile_compact_custom_forecast_chrono_20260711}"
 LOG_ROOT="${LOG_ROOT:-experiment_artifacts/QAR_benchmark_matrix_20260714/server_logs}"
-DATASETS_FAILED="${DATASETS_FAILED:-dataset8 dataset8-1 dataset9}"
+DATASETS_FAILED="${DATASETS_FAILED:-dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14}"
 FORECAST_ANCHORS="${FORECAST_ANCHORS:-predict_2_3 predict_4_5 predict_5_6 predict_8_9}"
 
 cd "${PROJECT_ROOT}"
