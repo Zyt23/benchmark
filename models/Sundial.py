@@ -51,6 +51,7 @@ class Model(nn.Module):
                     attention_mask=attention_mask,
                     max_new_tokens=self.pred_len,
                     num_samples=20,
+                    use_cache=False,
                 )
             output = output.mean(dim=1)
             outputs.append(output)
