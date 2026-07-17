@@ -95,6 +95,44 @@ def parse_forecast_result(result_dir: Path) -> dict[str, Any]:
     return dict(zip(FORECAST_METRICS, values))
 
 
+def find_result_dir(root: Path, task: str, run_tag: str, dataset: str, model: str,
+                    result_dir_raw: str) -> Path:
+    if result_dir_raw:
+        candidate = (root / result_dir_raw.lstrip("./")).resolve()
+        if candidate.exists():
+            return candidate
+
+    if task == "classification":
+        base = root / "results"
+        marker = "result_classification.txt"
+    else:
+        base = root / "results"
+        marker = "metrics.npy"
+
+    if not base.exists():
+        return Path("")
+
+    dataset_token = f"_{dataset}_"
+    model_token = f"_{model}_"
+    candidates = []
+    for path in base.iterdir():
+        if not path.is_dir():
+            continue
+        name = path.name
+        if run_tag in name and dataset_token in name and model_token in name and (path / marker).exists():
+            candidates.append(path)
+    if not candidates:
+        for path in base.iterdir():
+            if not path.is_dir():
+                continue
+            name = path.name
+            if run_tag in name and dataset in name and model in name and (path / marker).exists():
+                candidates.append(path)
+    if not candidates:
+        return Path("")
+    return sorted(candidates, key=lambda p: len(p.name))[0].resolve()
+
+
 def summary_dir_for_task(root: Path, task: str, run_tag: str) -> Path:
     if task == "classification":
         return root / "logs" / "datasetall" / run_tag
@@ -132,7 +170,9 @@ def collect(root: Path, expected: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
             else:
                 failed += 1
             result_dir_raw = str(row.get("result_dir", "")).strip()
-            result_dir = (root / result_dir_raw.lstrip("./")).resolve() if result_dir_raw else Path("")
+            dataset_name = row.get("dataset", "")
+            row_model = row.get("model", model)
+            result_dir = find_result_dir(root, task, run_tag, dataset_name, row_model, result_dir_raw)
             common = {
                 "experiment_group": exp.get("experiment_group", ""),
                 "task": task,
@@ -141,12 +181,12 @@ def collect(root: Path, expected: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
                 "history_count": exp.get("history_count", ""),
                 "target": exp.get("target", ""),
                 "anchor": exp.get("anchor", ""),
-                "dataset": row.get("dataset", ""),
-                "model": row.get("model", model),
+                "dataset": dataset_name,
+                "model": row_model,
                 "status": status,
                 "run_tag": run_tag,
                 "summary_dir": str(summary_dir),
-                "result_dir": str(result_dir) if result_dir_raw else "",
+                "result_dir": str(result_dir) if str(result_dir) else "",
             }
             if task == "classification":
                 result = parse_classification_result(result_dir / "result_classification.txt")
