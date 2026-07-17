@@ -39,8 +39,19 @@ class Model(nn.Module):
             if pad_len:
                 pad = series[:, :1].repeat(1, pad_len)
                 series = torch.cat([pad, series], dim=-1)
+            attention_mask = torch.ones(
+                series.shape[0],
+                series.shape[-1] // self.patch_len,
+                dtype=torch.long,
+                device=series.device,
+            )
             with torch.no_grad():
-                output = self.model.generate(series, max_new_tokens=self.pred_len, num_samples=20)
+                output = self.model.generate(
+                    series,
+                    attention_mask=attention_mask,
+                    max_new_tokens=self.pred_len,
+                    num_samples=20,
+                )
             output = output.mean(dim=1)
             outputs.append(output)
         dec_out = torch.stack(outputs, dim=-1)
