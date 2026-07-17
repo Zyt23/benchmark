@@ -17,9 +17,14 @@ Tasks:
       standard anchors, also without 6->8.
   forecast
       Four independent caches, one for each phase transition:
-      2->3, 4->5, 5->6, 8->9.  Each cache saves 80 rows:
-      input rows = transition-30 ... transition+29, target rows =
-      transition+30 ... transition+49 for seq_len=60/pred_len=20.
+      2->3, 4->5, 5->6, 8->9.
+
+      The legacy ``predict_*`` modes keep the old 80-row layout for
+      seq_len=60/pred_len=20 experiments.  The newer ``hist80_*`` modes save
+      one 80-row transition segment per flight, using transition-40 ...
+      transition+39.  These 80-row segments are later combined into
+      history-count experiments such as 1/4/8/12/16 previous segments ->
+      80-row target.
 """
 
 import argparse
