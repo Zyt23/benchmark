@@ -106,7 +106,28 @@ def subset_cache(cache: dict[str, np.ndarray], selected: np.ndarray) -> dict[str
     return out
 
 
-def build_one(base_cache: Path, out_cache: Path, variant_name: str, normal_keep: float, fault_keep: float) -> dict:
+def summarize_existing(base_cache: Path, out_cache: Path, variant_name: str, normal_keep: float, fault_keep: float) -> dict:
+    cache = load_cache(out_cache)
+    labels = np.asarray(cache.get("labels", np.zeros(cache["x"].shape[0], dtype=np.int64)), dtype=np.int64)
+    time_keys = np.asarray(cache.get("time_keys", np.arange(labels.shape[0], dtype=np.int64)), dtype=np.int64)
+    return {
+        "variant": variant_name,
+        "base_cache": str(base_cache),
+        "cache_file": str(out_cache),
+        "samples": int(labels.shape[0]),
+        "class0": int((labels == 0).sum()),
+        "class1": int((labels != 0).sum()),
+        "normal_keep": normal_keep,
+        "fault_keep": fault_keep,
+        "first_time_key": int(time_keys.min()) if time_keys.size else 0,
+        "last_time_key": int(time_keys.max()) if time_keys.size else 0,
+    }
+
+
+def build_one(base_cache: Path, out_cache: Path, variant_name: str, normal_keep: float, fault_keep: float,
+              skip_existing: bool = False) -> dict:
+    if skip_existing and out_cache.exists():
+        return summarize_existing(base_cache, out_cache, variant_name, normal_keep, fault_keep)
     cache = load_cache(base_cache)
     x = np.asarray(cache["x"])
     labels = np.asarray(cache.get("labels", np.zeros(x.shape[0], dtype=np.int64)), dtype=np.int64)
@@ -147,6 +168,7 @@ def main() -> None:
     parser.add_argument("--datasets", default=" ".join(DEFAULT_DATASETS))
     parser.add_argument("--variants", nargs="+", default=DEFAULT_VARIANTS)
     parser.add_argument("--suffix_separator", default="_")
+    parser.add_argument("--skip_existing", action="store_true")
     args = parser.parse_args()
 
     datasets = parse_list(args.datasets, DEFAULT_DATASETS)
@@ -161,7 +183,8 @@ def main() -> None:
             out_dataset = f"{dataset}{args.suffix_separator}{variant_name}"
             out_cache = args.output_root / out_dataset / "qar_compact_shiftN80.npz"
             print(f"build {out_dataset}", flush=True)
-            row = build_one(base_cache, out_cache, variant_name, normal_keep, fault_keep)
+            row = build_one(base_cache, out_cache, variant_name, normal_keep, fault_keep,
+                            skip_existing=args.skip_existing)
             row["dataset"] = dataset
             row["out_dataset"] = out_dataset
             rows.append(row)

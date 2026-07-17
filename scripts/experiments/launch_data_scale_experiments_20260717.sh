@@ -25,7 +25,8 @@ echo "[build] classification subset compacts -> ${SCALE_CLS_ROOT}"
   --base_root "${BASE_CLS_ROOT}" \
   --output_root "${SCALE_CLS_ROOT}" \
   --datasets "${DATASETS}" \
-  --variants both_keep50:0.5:0.5 both_keep25:0.25:0.25 normal_keep50:0.5:1.0 normal_keep25:0.25:1.0
+  --variants both_keep50:0.5:0.5 both_keep25:0.25:0.25 normal_keep50:0.5:1.0 normal_keep25:0.25:1.0 \
+  --skip_existing
 
 for anchor in ${ANCHORS}; do
   echo "[build] forecast subset compacts ${anchor} -> ${SCALE_FORECAST_ROOT}/${anchor}"
@@ -33,7 +34,8 @@ for anchor in ${ANCHORS}; do
     --base_root "${BASE_FORECAST_ROOT}/${anchor}" \
     --output_root "${SCALE_FORECAST_ROOT}/${anchor}" \
     --datasets "${DATASETS}" \
-    --variants both_keep50:0.5:0.5 both_keep25:0.25:0.25
+    --variants both_keep50:0.5:0.5 both_keep25:0.25:0.25 \
+    --skip_existing
 done
 
 read -r -a gpus <<< "${GPU_LIST}"
