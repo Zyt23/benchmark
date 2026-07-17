@@ -37,6 +37,7 @@ class Model(nn.Module):
         self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
         self.patch_len = int(os.environ.get("SUNDIAL_PATCH_LEN", "16"))
+        self.num_samples = int(os.environ.get("SUNDIAL_NUM_SAMPLES", "1"))
 
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
         outputs = []
@@ -57,10 +58,11 @@ class Model(nn.Module):
                     series,
                     attention_mask=attention_mask,
                     max_new_tokens=self.pred_len,
-                    num_samples=20,
+                    num_samples=self.num_samples,
                     use_cache=False,
                 )
-            output = output.mean(dim=1)
+            if output.ndim == 3:
+                output = output.mean(dim=1)
             outputs.append(output)
         dec_out = torch.stack(outputs, dim=-1)
         return dec_out
