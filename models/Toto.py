@@ -36,6 +36,7 @@ class Model(nn.Module):
         self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
         self.decode_block_size = int(os.environ.get("TOTO2_DECODE_BLOCK_SIZE", "768"))
+        self.patch_size = int(os.environ.get("TOTO2_PATCH_SIZE", "32"))
 
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
         means = x_enc.mean(1, keepdim=True).detach()
@@ -45,6 +46,24 @@ class Model(nn.Module):
 
         target = x_norm.permute(0, 2, 1).contiguous()
         target_mask = torch.ones_like(target, dtype=torch.bool)
+        pad_len = (-target.shape[-1]) % self.patch_size
+        if pad_len:
+            pad_values = torch.zeros(
+                target.shape[0],
+                target.shape[1],
+                pad_len,
+                dtype=target.dtype,
+                device=target.device,
+            )
+            pad_mask = torch.zeros(
+                target.shape[0],
+                target.shape[1],
+                pad_len,
+                dtype=torch.bool,
+                device=target.device,
+            )
+            target = torch.cat([pad_values, target], dim=-1)
+            target_mask = torch.cat([pad_mask, target_mask], dim=-1)
         series_ids = torch.zeros(target.shape[0], target.shape[1], dtype=torch.long, device=target.device)
 
         with torch.no_grad():
