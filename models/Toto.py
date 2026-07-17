@@ -1,7 +1,36 @@
 import os
 
 import torch
+import torch.nn.functional as F
 from torch import nn
+
+
+def _patch_torch_sdpa_for_toto() -> None:
+    """Make Toto's enable_gqa call work on older PyTorch builds.
+
+    Toto 2.0 calls ``scaled_dot_product_attention(..., enable_gqa=...)``.
+    Some deployed PyTorch 2.4 builds do not expose that keyword yet.  When GQA
+    is requested, emulate it by repeating K/V heads to match Q heads.
+    """
+    if getattr(F.scaled_dot_product_attention, "_toto_gqa_compat", False):
+        return
+    original_sdpa = F.scaled_dot_product_attention
+
+    def compat_sdpa(query, key, value, *args, enable_gqa=False, **kwargs):
+        if enable_gqa and query.shape[-3] != key.shape[-3]:
+            if query.shape[-3] % key.shape[-3] != 0:
+                raise ValueError(
+                    "Cannot emulate GQA: query heads {} not divisible by key heads {}".format(
+                        query.shape[-3], key.shape[-3]
+                    )
+                )
+            repeat = query.shape[-3] // key.shape[-3]
+            key = key.repeat_interleave(repeat, dim=-3)
+            value = value.repeat_interleave(repeat, dim=-3)
+        return original_sdpa(query, key, value, *args, **kwargs)
+
+    compat_sdpa._toto_gqa_compat = True
+    F.scaled_dot_product_attention = compat_sdpa
 
 
 class Model(nn.Module):
@@ -29,6 +58,7 @@ class Model(nn.Module):
                 "(which installs `toto2`). Install with: pip install toto-models"
             ) from exc
 
+        _patch_torch_sdpa_for_toto()
         model_path = os.environ.get("TOTO2_MODEL_PATH", "Datadog/Toto-2.0-22m")
         device = str(getattr(configs, "device", "cuda:0" if torch.cuda.is_available() else "cpu"))
         self.model = Toto2Model.from_pretrained(model_path).to(device).eval()
