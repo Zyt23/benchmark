@@ -529,6 +529,18 @@ public class TsFileWindowDumperAnchors {
         if (mode.endsWith("_predict_8_9")) {
             return new Anchor[]{new Anchor(8, 9, 30, 50)};
         }
+        if (mode.endsWith("_hist80_2_3")) {
+            return new Anchor[]{new Anchor(2, 3, 40, 40)};
+        }
+        if (mode.endsWith("_hist80_4_5")) {
+            return new Anchor[]{new Anchor(4, 5, 40, 40)};
+        }
+        if (mode.endsWith("_hist80_5_6")) {
+            return new Anchor[]{new Anchor(5, 6, 40, 40)};
+        }
+        if (mode.endsWith("_hist80_8_9")) {
+            return new Anchor[]{new Anchor(8, 9, 40, 40)};
+        }
         throw new IllegalArgumentException("Unknown mode: " + mode);
     }
 
