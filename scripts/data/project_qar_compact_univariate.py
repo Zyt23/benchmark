@@ -66,6 +66,15 @@ def pick_feature(feature_cols: list[str], target: str) -> int:
     for name in aliases.get(key, []):
         if name.lower() in normalized:
             return normalized[name.lower()]
+    if key == "manifold_pressure":
+        for i, name in enumerate(feature_cols):
+            low = name.lower()
+            if "press" in low or "pres" in low or "oupres" in low:
+                return i
+        for i, name in enumerate(feature_cols):
+            low = name.lower()
+            if low not in {"n21", "n22", "alt_std", "ias"}:
+                return i
     raise ValueError(f"target {target!r} not found. Available: {feature_cols}")
 
 
