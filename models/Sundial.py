@@ -6,6 +6,15 @@ from layers.SelfAttention_Family import FullAttention, AttentionLayer
 from layers.Embed import PatchEmbedding
 from transformers import AutoModelForCausalLM
 
+
+def _patch_transformers_cache_for_sundial():
+    try:
+        from transformers.cache_utils import DynamicCache
+    except Exception:
+        return
+    if not hasattr(DynamicCache, "get_max_length") and hasattr(DynamicCache, "get_seq_length"):
+        DynamicCache.get_max_length = DynamicCache.get_seq_length
+
 class Model(nn.Module):
     def __init__(self, configs):
         """
@@ -13,6 +22,7 @@ class Model(nn.Module):
         stride: int, stride for patch_embedding
         """
         super().__init__()
+        _patch_transformers_cache_for_sundial()
         model_path = os.environ.get("SUNDIAL_MODEL_PATH", "thuml/sundial-base-128m")
         device = str(getattr(configs, "device", "cuda:0" if torch.cuda.is_available() else "cpu"))
         self.model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True).to(device).eval()
