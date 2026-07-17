@@ -96,7 +96,7 @@ def parse_forecast_result(result_dir: Path) -> dict[str, Any]:
 
 
 def find_result_dir(root: Path, task: str, run_tag: str, dataset: str, model: str,
-                    result_dir_raw: str) -> Path:
+                    result_dir_raw: str) -> Path | None:
     if result_dir_raw:
         candidate = (root / result_dir_raw.lstrip("./")).resolve()
         if candidate.exists():
@@ -110,7 +110,7 @@ def find_result_dir(root: Path, task: str, run_tag: str, dataset: str, model: st
         marker = "metrics.npy"
 
     if not base.exists():
-        return Path("")
+        return None
 
     dataset_token = f"_{dataset}_"
     model_token = f"_{model}_"
@@ -129,7 +129,7 @@ def find_result_dir(root: Path, task: str, run_tag: str, dataset: str, model: st
             if run_tag in name and dataset in name and model in name and (path / marker).exists():
                 candidates.append(path)
     if not candidates:
-        return Path("")
+        return None
     return sorted(candidates, key=lambda p: len(p.name))[0].resolve()
 
 
@@ -173,6 +173,7 @@ def collect(root: Path, expected: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
             dataset_name = row.get("dataset", "")
             row_model = row.get("model", model)
             result_dir = find_result_dir(root, task, run_tag, dataset_name, row_model, result_dir_raw)
+            result_dir_text = str(result_dir) if result_dir is not None else ""
             common = {
                 "experiment_group": exp.get("experiment_group", ""),
                 "task": task,
@@ -186,16 +187,16 @@ def collect(root: Path, expected: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
                 "status": status,
                 "run_tag": run_tag,
                 "summary_dir": str(summary_dir),
-                "result_dir": str(result_dir) if str(result_dir) else "",
+                "result_dir": result_dir_text,
             }
             if task == "classification":
-                result = parse_classification_result(result_dir / "result_classification.txt")
+                result = parse_classification_result(result_dir / "result_classification.txt") if result_dir else {}
                 cls_rows.append({**common, **result})
             elif task == "forecast":
-                result = parse_forecast_result(result_dir)
+                result = parse_forecast_result(result_dir) if result_dir else {name: np.nan for name in FORECAST_METRICS}
                 forecast_rows.append({**common, **result})
             elif task == "zero_shot_forecast":
-                result = parse_forecast_result(result_dir)
+                result = parse_forecast_result(result_dir) if result_dir else {name: np.nan for name in FORECAST_METRICS}
                 zero_rows.append({**common, **result})
 
         missing = [d for d in expected_datasets if (d, model) not in seen]
