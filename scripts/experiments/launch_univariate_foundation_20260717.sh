@@ -42,12 +42,19 @@ wait_for_slot() {
 for anchor in ${ANCHORS}; do
   root="${UNIVARIATE_ROOT}/${anchor}"
   for model in ${MODELS}; do
+    run_tag="univariate_${TARGET_ALIAS}_${anchor}_${model}_${RUN_SUFFIX}"
+    printf "zero_shot_forecast\t%s\t%s\t%s\t%s\t%s\t%s\t60\t20\n" "${TARGET_ALIAS}" "${anchor}" "${model}" "${DATASETS}" "${run_tag}" "${root}" >> "${expected}"
+  done
+done
+
+for anchor in ${ANCHORS}; do
+  root="${UNIVARIATE_ROOT}/${anchor}"
+  for model in ${MODELS}; do
     wait_for_slot
     gpu="${gpus[$((job_idx % ${#gpus[@]}))]}"
     job_idx=$((job_idx + 1))
     run_tag="univariate_${TARGET_ALIAS}_${anchor}_${model}_${RUN_SUFFIX}"
     log="${LOG_ROOT}/${run_tag}.launcher.log"
-    printf "zero_shot_forecast\t%s\t%s\t%s\t%s\t%s\t%s\t60\t20\n" "${TARGET_ALIAS}" "${anchor}" "${model}" "${DATASETS}" "${run_tag}" "${root}" >> "${expected}"
     echo "[launch] univariate zero-shot model=${model} anchor=${anchor} gpu=${gpu}"
     (
       env \

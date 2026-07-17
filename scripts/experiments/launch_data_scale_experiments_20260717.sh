@@ -59,6 +59,25 @@ dataset_variant_list() {
   echo "${out# }"
 }
 
+for variant in both_keep50 both_keep25 normal_keep50 normal_keep25; do
+  datasets_variant="$(dataset_variant_list "${variant}")"
+  for model in ${MODELS}; do
+    run_tag="scale_${variant}_cls_${model}_${RUN_SUFFIX}"
+    printf "classification\t%s\t\t%s\t%s\t%s\t%s\n" "${variant}" "${model}" "${datasets_variant}" "${run_tag}" "${SCALE_CLS_ROOT}" >> "${expected}"
+  done
+done
+
+for variant in both_keep50 both_keep25; do
+  datasets_variant="$(dataset_variant_list "${variant}")"
+  for anchor in ${ANCHORS}; do
+    for model in ${MODELS}; do
+      root="${SCALE_FORECAST_ROOT}/${anchor}"
+      run_tag="scale_${variant}_forecast_${anchor}_${model}_${RUN_SUFFIX}"
+      printf "forecast\t%s\t%s\t%s\t%s\t%s\t%s\n" "${variant}" "${anchor}" "${model}" "${datasets_variant}" "${run_tag}" "${root}" >> "${expected}"
+    done
+  done
+done
+
 launch_cls() {
   local variant="$1"
   local model="$2"
@@ -66,7 +85,6 @@ launch_cls() {
   local gpu="$4"
   local run_tag="scale_${variant}_cls_${model}_${RUN_SUFFIX}"
   local log="${LOG_ROOT}/${run_tag}.launcher.log"
-  printf "classification\t%s\t\t%s\t%s\t%s\t%s\n" "${variant}" "${model}" "${datasets_variant}" "${run_tag}" "${SCALE_CLS_ROOT}" >> "${expected}"
   echo "[launch] cls variant=${variant} model=${model} gpu=${gpu}"
   (
     env \
@@ -96,7 +114,6 @@ launch_forecast() {
   local root="${SCALE_FORECAST_ROOT}/${anchor}"
   local run_tag="scale_${variant}_forecast_${anchor}_${model}_${RUN_SUFFIX}"
   local log="${LOG_ROOT}/${run_tag}.launcher.log"
-  printf "forecast\t%s\t%s\t%s\t%s\t%s\t%s\n" "${variant}" "${anchor}" "${model}" "${datasets_variant}" "${run_tag}" "${root}" >> "${expected}"
   echo "[launch] forecast variant=${variant} anchor=${anchor} model=${model} gpu=${gpu}"
   (
     env \

@@ -37,6 +37,19 @@ stride_for_patch() {
 }
 
 for patch_len in ${PATCH_VALUES}; do
+  run_tag="patchlen${patch_len}_cls_PatchTST_${RUN_SUFFIX}"
+  printf "classification\t%s\t\tPatchTST\t%s\t%s\t%s\n" "${patch_len}" "${DATASETS}" "${run_tag}" "${BASE_CLS_ROOT}" >> "${expected}"
+
+  for anchor in ${ANCHORS}; do
+    for model in PatchTST TimeXer; do
+      root="${BASE_FORECAST_ROOT}/${anchor}"
+      run_tag="patchlen${patch_len}_forecast_${anchor}_${model}_${RUN_SUFFIX}"
+      printf "forecast\t%s\t%s\t%s\t%s\t%s\t%s\n" "${patch_len}" "${anchor}" "${model}" "${DATASETS}" "${run_tag}" "${root}" >> "${expected}"
+    done
+  done
+done
+
+for patch_len in ${PATCH_VALUES}; do
   stride="$(stride_for_patch "${patch_len}")"
 
   wait_for_slot
@@ -44,7 +57,6 @@ for patch_len in ${PATCH_VALUES}; do
   job_idx=$((job_idx + 1))
   run_tag="patchlen${patch_len}_cls_PatchTST_${RUN_SUFFIX}"
   log="${LOG_ROOT}/${run_tag}.launcher.log"
-  printf "classification\t%s\t\tPatchTST\t%s\t%s\t%s\n" "${patch_len}" "${DATASETS}" "${run_tag}" "${BASE_CLS_ROOT}" >> "${expected}"
   echo "[launch] classification PatchTST patch_len=${patch_len} gpu=${gpu}"
   (
     env \
@@ -74,7 +86,6 @@ for patch_len in ${PATCH_VALUES}; do
       root="${BASE_FORECAST_ROOT}/${anchor}"
       run_tag="patchlen${patch_len}_forecast_${anchor}_${model}_${RUN_SUFFIX}"
       log="${LOG_ROOT}/${run_tag}.launcher.log"
-      printf "forecast\t%s\t%s\t%s\t%s\t%s\t%s\n" "${patch_len}" "${anchor}" "${model}" "${DATASETS}" "${run_tag}" "${root}" >> "${expected}"
       echo "[launch] forecast ${model} anchor=${anchor} patch_len=${patch_len} gpu=${gpu}"
       (
         env \

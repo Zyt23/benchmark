@@ -53,13 +53,21 @@ for hist in ${HISTORY_COUNTS}; do
   seq_len=$((hist * 80 + 40))
   root="${CONTEXT_ROOT}/hist${hist}/predict_2_3"
   for model in ${MODELS}; do
+    run_tag="context40_hist${hist}_predict_2_3_${model}_${RUN_SUFFIX}"
+    printf "zero_shot_forecast\t%s\tpredict_2_3\t%s\t%s\t%s\t%s\t%s\t40\n" "${hist}" "${model}" "${DATASETS}" "${run_tag}" "${root}" "${seq_len}" >> "${expected}"
+  done
+done
+
+for hist in ${HISTORY_COUNTS}; do
+  seq_len=$((hist * 80 + 40))
+  root="${CONTEXT_ROOT}/hist${hist}/predict_2_3"
+  for model in ${MODELS}; do
     wait_for_slot
     gpu="${gpus[$((job_idx % ${#gpus[@]}))]}"
     job_idx=$((job_idx + 1))
     batch_size="$(batch_for_model "${model}")"
     run_tag="context40_hist${hist}_predict_2_3_${model}_${RUN_SUFFIX}"
     log="${LOG_ROOT}/${run_tag}.launcher.log"
-    printf "zero_shot_forecast\t%s\tpredict_2_3\t%s\t%s\t%s\t%s\t%s\t40\n" "${hist}" "${model}" "${DATASETS}" "${run_tag}" "${root}" "${seq_len}" >> "${expected}"
     echo "[launch] zero-shot model=${model} hist=${hist} seq_len=${seq_len} gpu=${gpu}"
     (
       env \

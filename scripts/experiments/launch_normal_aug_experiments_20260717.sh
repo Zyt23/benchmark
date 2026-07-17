@@ -73,12 +73,24 @@ wait_for_slot() {
 }
 
 for model in ${MODELS}; do
+  run_tag="normalx_cls_${model}_${RUN_SUFFIX}"
+  printf "classification\tnormalx\t\t%s\t%s\t%s\t%s\n" "${model}" "${DATASETS_AUG}" "${run_tag}" "${NORMAL_AUG_CLS_ROOT}" >> "${expected}"
+done
+
+for anchor in ${ANCHORS}; do
+  for model in ${MODELS}; do
+    root="${NORMAL_AUG_FORECAST_ROOT}/${anchor}"
+    run_tag="normalx_forecast_${anchor}_${model}_${RUN_SUFFIX}"
+    printf "forecast\tnormalx\t%s\t%s\t%s\t%s\t%s\n" "${anchor}" "${model}" "${DATASETS_AUG}" "${run_tag}" "${root}" >> "${expected}"
+  done
+done
+
+for model in ${MODELS}; do
   wait_for_slot
   gpu="${gpus[$((job_idx % ${#gpus[@]}))]}"
   job_idx=$((job_idx + 1))
   run_tag="normalx_cls_${model}_${RUN_SUFFIX}"
   log="${LOG_ROOT}/${run_tag}.launcher.log"
-  printf "classification\tnormalx\t\t%s\t%s\t%s\t%s\n" "${model}" "${DATASETS_AUG}" "${run_tag}" "${NORMAL_AUG_CLS_ROOT}" >> "${expected}"
   echo "[launch] cls normalx model=${model} gpu=${gpu}"
   (
     env \
@@ -107,7 +119,6 @@ for anchor in ${ANCHORS}; do
     root="${NORMAL_AUG_FORECAST_ROOT}/${anchor}"
     run_tag="normalx_forecast_${anchor}_${model}_${RUN_SUFFIX}"
     log="${LOG_ROOT}/${run_tag}.launcher.log"
-    printf "forecast\tnormalx\t%s\t%s\t%s\t%s\t%s\n" "${anchor}" "${model}" "${DATASETS_AUG}" "${run_tag}" "${root}" >> "${expected}"
     echo "[launch] forecast normalx anchor=${anchor} model=${model} gpu=${gpu}"
     (
       env \
