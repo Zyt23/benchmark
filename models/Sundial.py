@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import os
+import types
 from layers.Transformer_EncDec import Encoder, EncoderLayer
 from layers.SelfAttention_Family import FullAttention, AttentionLayer
 from layers.Embed import PatchEmbedding
@@ -26,6 +27,12 @@ class Model(nn.Module):
         model_path = os.environ.get("SUNDIAL_MODEL_PATH", "thuml/sundial-base-128m")
         device = str(getattr(configs, "device", "cuda:0" if torch.cuda.is_available() else "cpu"))
         self.model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True).to(device).eval()
+        if not hasattr(self.model, "_extract_past_from_model_output"):
+            def _extract_past_from_model_output(model_self, outputs, standardize_cache_format=False):
+                return getattr(outputs, "past_key_values", None)
+            self.model._extract_past_from_model_output = types.MethodType(
+                _extract_past_from_model_output, self.model
+            )
         self.task_name = configs.task_name
         self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
