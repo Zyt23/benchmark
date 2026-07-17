@@ -19,8 +19,9 @@ Tasks:
       Four independent caches, one for each phase transition:
       2->3, 4->5, 5->6, 8->9.
 
-      The legacy ``predict_*`` modes keep the old 80-row layout for
-      seq_len=60/pred_len=20 experiments.  The newer ``hist80_*`` modes save
+      The ``predict_*`` modes keep an 80-row layout around each transition
+      with 30 points before and 50 points after the transition; they are used
+      by seq_len=60/pred_len=20 experiments.  The newer ``hist80_*`` modes save
       one 80-row transition segment per flight, using transition-40 ...
       transition+39.  These 80-row segments are later combined into
       history-count experiments such as 1/4/8/12/16 previous segments ->

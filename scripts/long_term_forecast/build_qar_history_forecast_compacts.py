@@ -4,7 +4,7 @@
 Input caches are phase-transition segment caches where each sample is one
 flight/transition segment with length 80, e.g. transition-40 ... transition+39.
 
-For a history count K, every output sample is:
+Default mode: for a history count K, every output sample is:
 
     X[previous K flights, each 80 points] + Y[current flight, 80 points]
 
@@ -13,6 +13,17 @@ The standard QAR forecast loader can then run with:
     seq_len = K * 80
     pred_len = 80
     label_len = 80
+
+Current-context mode: pass ``--current_context_len 40 --target_len 40`` to use:
+
+    X[previous K flights, each 80 points] + X[current flight, first 40 points]
+        -> Y[current flight, last 40 points]
+
+Then run with:
+
+    seq_len = K * 80 + 40
+    pred_len = 40
+    label_len = 40
 
 Only earlier flights from the same dataset and same anchor cache are used as
 history.  No future target information is used as input for that target.
@@ -66,7 +77,14 @@ def load_cache(path: Path) -> dict[str, np.ndarray]:
     return out
 
 
-def build_one(cache_path: Path, out_path: Path, history_count: int, segment_len: int) -> dict:
+def build_one(
+    cache_path: Path,
+    out_path: Path,
+    history_count: int,
+    segment_len: int,
+    current_context_len: int = 0,
+    target_len: int = 0,
+) -> dict:
     cache = load_cache(cache_path)
     x = np.asarray(cache["x"], dtype=np.float32)
     mask = np.asarray(cache["mask"], dtype=np.float32)
@@ -77,12 +95,19 @@ def build_one(cache_path: Path, out_path: Path, history_count: int, segment_len:
 
     if x.ndim != 3:
         raise ValueError(f"{cache_path}: expected x shape (N,T,C), got {x.shape}")
-    if x.shape[1] < segment_len:
-        raise ValueError(f"{cache_path}: segment length {x.shape[1]} < requested {segment_len}")
+    if current_context_len or target_len:
+        if current_context_len <= 0 or target_len <= 0:
+            raise ValueError("current-context mode requires both current_context_len and target_len > 0")
+        required_segment_len = current_context_len + target_len
+    else:
+        required_segment_len = segment_len
+
+    if x.shape[1] < required_segment_len:
+        raise ValueError(f"{cache_path}: segment length {x.shape[1]} < requested {required_segment_len}")
 
     order = np.lexsort((sources, time_keys))
-    x = x[order, :segment_len, :]
-    mask = mask[order, :segment_len]
+    x = x[order, :required_segment_len, :]
+    mask = mask[order, :required_segment_len]
     labels = labels[order]
     sources = sources[order]
     time_keys = time_keys[order]
@@ -95,10 +120,20 @@ def build_one(cache_path: Path, out_path: Path, history_count: int, segment_len:
     rows_history_sources = []
     for pos in range(history_count, x.shape[0]):
         hist_slice = slice(pos - history_count, pos)
-        context_x = x[hist_slice].reshape(history_count * segment_len, x.shape[2])
-        target_x = x[pos]
-        context_mask = mask[hist_slice].reshape(history_count * segment_len)
-        target_mask = mask[pos]
+        history_x = x[hist_slice, :segment_len, :].reshape(history_count * segment_len, x.shape[2])
+        history_mask = mask[hist_slice, :segment_len].reshape(history_count * segment_len)
+        if current_context_len and target_len:
+            current_context_x = x[pos, :current_context_len, :]
+            target_x = x[pos, current_context_len:current_context_len + target_len, :]
+            current_context_mask = mask[pos, :current_context_len]
+            target_mask = mask[pos, current_context_len:current_context_len + target_len]
+            context_x = np.concatenate([history_x, current_context_x], axis=0)
+            context_mask = np.concatenate([history_mask, current_context_mask], axis=0)
+        else:
+            context_x = history_x
+            target_x = x[pos, :segment_len, :]
+            context_mask = history_mask
+            target_mask = mask[pos, :segment_len]
         rows_x.append(np.concatenate([context_x, target_x], axis=0))
         rows_mask.append(np.concatenate([context_mask, target_mask], axis=0))
         rows_labels.append(labels[pos])
@@ -130,16 +165,19 @@ def build_one(cache_path: Path, out_path: Path, history_count: int, segment_len:
         history_sources=out_history_sources,
         history_count=np.asarray([history_count], dtype=np.int64),
         segment_len=np.asarray([segment_len], dtype=np.int64),
-        seq_len=np.asarray([history_count * segment_len], dtype=np.int64),
-        pred_len=np.asarray([segment_len], dtype=np.int64),
+        seq_len=np.asarray([history_count * segment_len + current_context_len], dtype=np.int64),
+        pred_len=np.asarray([target_len or segment_len], dtype=np.int64),
+        current_context_len=np.asarray([current_context_len], dtype=np.int64),
+        target_len=np.asarray([target_len or segment_len], dtype=np.int64),
     )
 
     return {
         "samples": int(out_labels.shape[0]),
         "class0": int((out_labels == 0).sum()),
         "class1": int((out_labels == 1).sum()),
-        "seq_len": int(history_count * segment_len),
-        "pred_len": int(segment_len),
+        "seq_len": int(history_count * segment_len + current_context_len),
+        "pred_len": int(target_len or segment_len),
+        "current_context_len": int(current_context_len),
         "total_len": int(out_x.shape[1]),
         "feature_count": int(out_x.shape[2]),
         "first_time_key": int(out_time_keys.min()),
@@ -155,6 +193,8 @@ def main() -> None:
     parser.add_argument("--anchors", default=" ".join(DEFAULT_ANCHORS))
     parser.add_argument("--history_counts", nargs="+", type=int, default=[1, 4, 8, 12, 16])
     parser.add_argument("--segment_len", type=int, default=80)
+    parser.add_argument("--current_context_len", type=int, default=0)
+    parser.add_argument("--target_len", type=int, default=0)
     args = parser.parse_args()
 
     datasets = parse_list(args.datasets, DEFAULT_DATASETS)
@@ -166,7 +206,14 @@ def main() -> None:
                 cache_path = args.source_root / anchor / dataset / "qar_compact_shiftN80.npz"
                 out_path = args.output_root / f"hist{history_count}" / anchor / dataset / "qar_compact_shiftN80.npz"
                 print(f"build hist{history_count} {anchor} {dataset}", flush=True)
-                stats = build_one(cache_path, out_path, history_count, args.segment_len)
+                stats = build_one(
+                    cache_path,
+                    out_path,
+                    history_count,
+                    args.segment_len,
+                    current_context_len=args.current_context_len,
+                    target_len=args.target_len,
+                )
                 row = {
                     "history_count": history_count,
                     "anchor": anchor,

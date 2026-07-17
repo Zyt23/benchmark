@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import os
 from layers.Transformer_EncDec import Encoder, EncoderLayer
 from layers.SelfAttention_Family import FullAttention, AttentionLayer
 from layers.Embed import PatchEmbedding
@@ -12,7 +13,9 @@ class Model(nn.Module):
         stride: int, stride for patch_embedding
         """
         super().__init__()
-        self.model = AutoModelForCausalLM.from_pretrained('thuml/sundial-base-128m', trust_remote_code=True)
+        model_path = os.environ.get("SUNDIAL_MODEL_PATH", "thuml/sundial-base-128m")
+        device = str(getattr(configs, "device", "cuda:0" if torch.cuda.is_available() else "cpu"))
+        self.model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True).to(device).eval()
         self.task_name = configs.task_name
         self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
@@ -20,7 +23,8 @@ class Model(nn.Module):
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
         outputs = []
         for i in range(x_enc.shape[-1]):
-            output = self.model.generate(x_enc[...,i], max_new_tokens=self.pred_len, num_samples=20)
+            with torch.no_grad():
+                output = self.model.generate(x_enc[...,i], max_new_tokens=self.pred_len, num_samples=20)
             output = output.mean(dim=1)
             outputs.append(output)
         dec_out = torch.stack(outputs, dim=-1)

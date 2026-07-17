@@ -32,6 +32,8 @@ N_HEADS="${N_HEADS:-8}"
 E_LAYERS="${E_LAYERS:-2}"
 D_LAYERS="${D_LAYERS:-1}"
 DROPOUT="${DROPOUT:-0.1}"
+PATCH_LEN="${PATCH_LEN:-16}"
+STRIDE="${STRIDE:-8}"
 
 CHECKPOINTS="${CHECKPOINTS:-${HOME}/qar_checkpoint_archive/checkpoints_forecast/${RUN_TAG}}"
 LOG_DIR="${LOG_DIR:-./logs/long_term_forecast/${RUN_TAG}}"
@@ -55,6 +57,8 @@ echo "Compact root: ${COMPACT_ROOT}"
 echo "Datasets: ${DATASETS}"
 echo "Models: ${MODELS}"
 echo "Window: seq_len=${SEQ_LEN}, label_len=${LABEL_LEN}, pred_len=${PRED_LEN}"
+echo "PATCH_LEN: ${PATCH_LEN}"
+echo "STRIDE: ${STRIDE}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 echo "USE_MULTI_GPU: ${USE_MULTI_GPU}"
 echo "Checkpoints: ${CHECKPOINTS}"
@@ -115,6 +119,8 @@ PY
       --d_ff "${D_FF}" \
       --top_k 5 \
       --num_kernels 6 \
+      --patch_len "${PATCH_LEN}" \
+      --stride "${STRIDE}" \
       --dropout "${DROPOUT}" \
       --lradj cosine \
       --des "${des}" \

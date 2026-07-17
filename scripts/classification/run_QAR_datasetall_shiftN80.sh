@@ -15,6 +15,8 @@ SAVE_EPOCH_CHECKPOINTS="${SAVE_EPOCH_CHECKPOINTS:-0}"
 CLASS_WEIGHT="${CLASS_WEIGHT:-balanced}"
 EARLY_STOP_METRIC="${EARLY_STOP_METRIC:-macro_f1}"
 QAR_SPLIT_STRATEGY="${QAR_SPLIT_STRATEGY:-per_class_chrono}"
+PATCH_LEN="${PATCH_LEN:-16}"
+STRIDE="${STRIDE:-8}"
 COMPACT_ROOT="${COMPACT_ROOT:-./datasetall_compact}"
 CHECKPOINTS="${CHECKPOINTS:-./checkpoints_datasetall/${RUN_TAG}}"
 LOG_DIR="${LOG_DIR:-./logs/datasetall/${RUN_TAG}}"
@@ -40,6 +42,8 @@ echo "USE_MULTI_GPU: ${USE_MULTI_GPU}"
 echo "CLASS_WEIGHT: ${CLASS_WEIGHT}"
 echo "EARLY_STOP_METRIC: ${EARLY_STOP_METRIC}"
 echo "QAR_SPLIT_STRATEGY: ${QAR_SPLIT_STRATEGY}"
+echo "PATCH_LEN: ${PATCH_LEN}"
+echo "STRIDE: ${STRIDE}"
 echo "Checkpoints: ${CHECKPOINTS}"
 echo "Logs: ${LOG_DIR}"
 
@@ -79,6 +83,8 @@ for dataset in ${DATASETS}; do
       --d_ff 128 \
       --top_k 5 \
       --num_kernels 6 \
+      --patch_len "${PATCH_LEN}" \
+      --stride "${STRIDE}" \
       --dropout 0.2 \
       --lradj cosine \
       --des "${des}" \
