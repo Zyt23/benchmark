@@ -82,6 +82,7 @@ CLASSIFICATION_MODELS = [
     "iTransformer",
     "MultiROCKET",
     "MiniROCKET",
+    "TabPFN",
 ]
 
 ANOMALY_MODELS = ["KAN-AD", "Anomaly Trans", "TranAD", "USAD", "OmniAnomaly"]
@@ -105,6 +106,7 @@ PENDING_REASON = {
     "MambaSL": "MISSING_DEP: mamba_ssm is not installed on server",
     "VSFormer": "PENDING_ADAPT: not yet connected to QAR compact loader",
     "LITE": "PENDING_ADAPT: not yet connected to QAR compact loader",
+    "TabPFN": "PENDING_RUN",
 }
 
 FORECAST_LABELS = {
