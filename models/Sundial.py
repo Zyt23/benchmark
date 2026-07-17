@@ -29,12 +29,18 @@ class Model(nn.Module):
         self.task_name = configs.task_name
         self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
+        self.patch_len = int(os.environ.get("SUNDIAL_PATCH_LEN", "16"))
 
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
         outputs = []
         for i in range(x_enc.shape[-1]):
+            series = x_enc[..., i]
+            pad_len = (-series.shape[-1]) % self.patch_len
+            if pad_len:
+                pad = series[:, :1].repeat(1, pad_len)
+                series = torch.cat([pad, series], dim=-1)
             with torch.no_grad():
-                output = self.model.generate(x_enc[...,i], max_new_tokens=self.pred_len, num_samples=20)
+                output = self.model.generate(series, max_new_tokens=self.pred_len, num_samples=20)
             output = output.mean(dim=1)
             outputs.append(output)
         dec_out = torch.stack(outputs, dim=-1)
