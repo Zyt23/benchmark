@@ -12,6 +12,7 @@ BASE_CLS_ROOT="${BASE_CLS_ROOT:-datasetall_tsfile_compact_custom_cls_chrono_2026
 BASE_FORECAST_ROOT="${BASE_FORECAST_ROOT:-datasetall_tsfile_compact_custom_forecast_chrono_20260711}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-experiment_artifacts/QAR_extra_experiments_20260717}"
 LOG_ROOT="${LOG_ROOT:-${ARTIFACT_ROOT}/server_logs/patchlen}"
+RUN_SUFFIX="${RUN_SUFFIX:-20260717}"
 
 cd "${PROJECT_ROOT}"
 mkdir -p "${LOG_ROOT}"
@@ -41,7 +42,7 @@ for patch_len in ${PATCH_VALUES}; do
   wait_for_slot
   gpu="${gpus[$((job_idx % ${#gpus[@]}))]}"
   job_idx=$((job_idx + 1))
-  run_tag="patchlen${patch_len}_cls_PatchTST_20260717"
+  run_tag="patchlen${patch_len}_cls_PatchTST_${RUN_SUFFIX}"
   log="${LOG_ROOT}/${run_tag}.launcher.log"
   printf "classification\t%s\t\tPatchTST\t%s\t%s\t%s\n" "${patch_len}" "${DATASETS}" "${run_tag}" "${BASE_CLS_ROOT}" >> "${expected}"
   echo "[launch] classification PatchTST patch_len=${patch_len} gpu=${gpu}"
@@ -71,7 +72,7 @@ for patch_len in ${PATCH_VALUES}; do
       gpu="${gpus[$((job_idx % ${#gpus[@]}))]}"
       job_idx=$((job_idx + 1))
       root="${BASE_FORECAST_ROOT}/${anchor}"
-      run_tag="patchlen${patch_len}_forecast_${anchor}_${model}_20260717"
+      run_tag="patchlen${patch_len}_forecast_${anchor}_${model}_${RUN_SUFFIX}"
       log="${LOG_ROOT}/${run_tag}.launcher.log"
       printf "forecast\t%s\t%s\t%s\t%s\t%s\t%s\n" "${patch_len}" "${anchor}" "${model}" "${DATASETS}" "${run_tag}" "${root}" >> "${expected}"
       echo "[launch] forecast ${model} anchor=${anchor} patch_len=${patch_len} gpu=${gpu}"

@@ -14,6 +14,7 @@ GPU_LIST="${GPU_LIST:-0 1 2 3 4}"
 MAX_PARALLEL="${MAX_PARALLEL:-4}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-experiment_artifacts/QAR_extra_experiments_20260717}"
 LOG_ROOT="${LOG_ROOT:-${ARTIFACT_ROOT}/server_logs/univariate_foundation}"
+RUN_SUFFIX="${RUN_SUFFIX:-20260717}"
 
 cd "${PROJECT_ROOT}"
 mkdir -p "${LOG_ROOT}"
@@ -44,7 +45,7 @@ for anchor in ${ANCHORS}; do
     wait_for_slot
     gpu="${gpus[$((job_idx % ${#gpus[@]}))]}"
     job_idx=$((job_idx + 1))
-    run_tag="univariate_${TARGET_ALIAS}_${anchor}_${model}_20260717"
+    run_tag="univariate_${TARGET_ALIAS}_${anchor}_${model}_${RUN_SUFFIX}"
     log="${LOG_ROOT}/${run_tag}.launcher.log"
     printf "zero_shot_forecast\t%s\t%s\t%s\t%s\t%s\t%s\t60\t20\n" "${TARGET_ALIAS}" "${anchor}" "${model}" "${DATASETS}" "${run_tag}" "${root}" >> "${expected}"
     echo "[launch] univariate zero-shot model=${model} anchor=${anchor} gpu=${gpu}"

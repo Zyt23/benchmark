@@ -19,6 +19,7 @@ LOG_ROOT="${LOG_ROOT:-${ARTIFACT_ROOT}/server_logs/normal_aug}"
 
 LEAP_EXTRA_ZIP="${LEAP_EXTRA_ZIP:-datasetall/data12-0类追加csv数据(1).zip}"
 A320_EXTRA_ZIP="${A320_EXTRA_ZIP:-datasetall/320-HPV-正常-追加567.zip}"
+RUN_SUFFIX="${RUN_SUFFIX:-20260717}"
 
 cd "${PROJECT_ROOT}"
 mkdir -p "${LOG_ROOT}"
@@ -75,7 +76,7 @@ for model in ${MODELS}; do
   wait_for_slot
   gpu="${gpus[$((job_idx % ${#gpus[@]}))]}"
   job_idx=$((job_idx + 1))
-  run_tag="normalx_cls_${model}_20260717"
+  run_tag="normalx_cls_${model}_${RUN_SUFFIX}"
   log="${LOG_ROOT}/${run_tag}.launcher.log"
   printf "classification\tnormalx\t\t%s\t%s\t%s\t%s\n" "${model}" "${DATASETS_AUG}" "${run_tag}" "${NORMAL_AUG_CLS_ROOT}" >> "${expected}"
   echo "[launch] cls normalx model=${model} gpu=${gpu}"
@@ -104,7 +105,7 @@ for anchor in ${ANCHORS}; do
     gpu="${gpus[$((job_idx % ${#gpus[@]}))]}"
     job_idx=$((job_idx + 1))
     root="${NORMAL_AUG_FORECAST_ROOT}/${anchor}"
-    run_tag="normalx_forecast_${anchor}_${model}_20260717"
+    run_tag="normalx_forecast_${anchor}_${model}_${RUN_SUFFIX}"
     log="${LOG_ROOT}/${run_tag}.launcher.log"
     printf "forecast\tnormalx\t%s\t%s\t%s\t%s\t%s\n" "${anchor}" "${model}" "${DATASETS_AUG}" "${run_tag}" "${root}" >> "${expected}"
     echo "[launch] forecast normalx anchor=${anchor} model=${model} gpu=${gpu}"
