@@ -51,9 +51,17 @@ def pick_feature(feature_cols: list[str], target: str) -> int:
         return normalized[key]
     # Useful aliases for QAR pressure-like variables.
     aliases = {
-        "manifold_pressure": ["PRECOOL_PRESS1", "PRECOOL_PRESS2", "BMPS1", "BMPS2"],
+        "manifold_pressure": [
+            "PRECOOL_PRESS1", "PRECOOL_PRESS2", "BMPS1", "BMPS2",
+            "casrcac1oupresmp_01", "caslcac1oupresmp_01",
+            "casrcac2oupresmp_01", "caslcac2oupresmp_01",
+        ],
         "precool_press": ["PRECOOL_PRESS1", "PRECOOL_PRESS2"],
         "bmps": ["BMPS1", "BMPS2"],
+        "cac_out_pressure": [
+            "casrcac1oupresmp_01", "caslcac1oupresmp_01",
+            "casrcac2oupresmp_01", "caslcac2oupresmp_01",
+        ],
     }
     for name in aliases.get(key, []):
         if name.lower() in normalized:
