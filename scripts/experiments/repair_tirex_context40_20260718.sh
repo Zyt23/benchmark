@@ -14,7 +14,8 @@ DATASETS="${DATASETS:-dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 da
 CONTEXT_ROOT="${CONTEXT_ROOT:-datasetall_tsfile_compact_context40_predict23_20260717}"
 HISTORY_COUNTS="${HISTORY_COUNTS:-2 3 5 8}"
 RUN_SUFFIX="${RUN_SUFFIX:-20260717_c40local}"
-TIREX_MODEL_PATH="${TIREX_MODEL_PATH:-external_models/tirex/model.ckpt}"
+TIREX_MODEL_PATH="${TIREX_MODEL_PATH:-NX-AI/TiRex}"
+HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 GPU="${GPU:-0}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-experiment_artifacts/QAR_extra_experiments_20260717}"
 LOG_ROOT="${LOG_ROOT:-${ARTIFACT_ROOT}/server_logs/foundation_context40_tirex_fix}"
@@ -70,6 +71,7 @@ for hist in ${HISTORY_COUNTS}; do
       NUM_WORKERS="${NUM_WORKERS:-0}" \
       QAR_SPLIT_STRATEGY="${QAR_SPLIT_STRATEGY:-per_class_chrono}" \
       TIREX_MODEL_PATH="${TIREX_MODEL_PATH}" \
+      HF_HUB_OFFLINE="${HF_HUB_OFFLINE}" \
       bash scripts/long_term_forecast/run_QAR_tsfile_zero_shot_forecast_shiftN80.sh
   ) > "${log}" 2>&1
 done
