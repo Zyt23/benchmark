@@ -9,6 +9,7 @@ set -euo pipefail
 # from the old summary files.
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
+PYTHON="${PYTHON:-/home/para/anaconda3/bin/python}"
 SCALE_CLS_ROOT="${SCALE_CLS_ROOT:-datasetall_tsfile_compact_scale_cls_20260717}"
 GPU="${GPU:-0}"
 CLS_BATCH_SIZE="${CLS_BATCH_SIZE:-16}"
@@ -25,7 +26,7 @@ mkdir -p "${LOG_ROOT}"
 
 reset_failed_summary_rows() {
   local run_tag="$1"
-  python - "${run_tag}" <<'PY'
+  "${PYTHON}" - "${run_tag}" <<'PY'
 import csv
 import sys
 from pathlib import Path

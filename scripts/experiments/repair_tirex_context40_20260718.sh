@@ -9,6 +9,7 @@ set -euo pipefail
 # remains valid.
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
+PYTHON="${PYTHON:-/home/para/anaconda3/bin/python}"
 DATASETS="${DATASETS:-dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14}"
 CONTEXT_ROOT="${CONTEXT_ROOT:-datasetall_tsfile_compact_context40_predict23_20260717}"
 HISTORY_COUNTS="${HISTORY_COUNTS:-2 3 5 8}"
@@ -23,7 +24,7 @@ mkdir -p "${LOG_ROOT}"
 
 reset_failed_summary_rows() {
   local run_tag="$1"
-  python - "${run_tag}" <<'PY'
+  "${PYTHON}" - "${run_tag}" <<'PY'
 import csv
 import sys
 from pathlib import Path

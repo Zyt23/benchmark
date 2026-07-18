@@ -10,6 +10,7 @@ set -euo pipefail
 # run tags and short checkpoint roots.
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
+PYTHON="${PYTHON:-/home/para/anaconda3/bin/python}"
 DATASETS="${DATASETS:-dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14}"
 MODELS="${MODELS:-Transformer TimesNet PatchTST DLinear iTransformer}"
 VARIANTS="${VARIANTS:-both_keep50 both_keep25}"
@@ -28,7 +29,7 @@ mkdir -p "${LOG_ROOT}"
 
 if [[ "${FILTER_OLD_EXPECTED}" == "1" ]]; then
   echo "[repair] keep only classification rows in old data-scale expected_jobs.tsv"
-  python - <<'PY'
+  "${PYTHON}" - <<'PY'
 from pathlib import Path
 
 groups = [
