@@ -31,6 +31,8 @@ def parse_args():
     parser.add_argument("--run_tags", nargs="+", required=True, help="Run tag(s) under logs/long_term_forecast.")
     parser.add_argument("--output_dir", required=True, help="Artifact directory to create.")
     parser.add_argument("--log_root", default="logs/long_term_forecast", help="Log root containing run tag dirs.")
+    parser.add_argument("--results_root", default="results",
+                        help="Fallback result root when an older summary has an empty result_dir.")
     parser.add_argument("--remote_project", default="", help="Remote project path recorded in README.")
     parser.add_argument("--compact_root", default="datasetall_tsfile_compact", help="Compact cache root recorded in README.")
     parser.add_argument("--seq_len", type=int, default=60)
@@ -61,6 +63,20 @@ def parse_metrics(result_dir):
         return {name: np.nan for name in METRIC_NAMES}
     values = np.load(metrics_path, allow_pickle=False).astype(float).tolist()
     return dict(zip(METRIC_NAMES, values))
+
+
+def discover_result_dir(results_root, run_tag, dataset, model):
+    """Find a result directory omitted from a summary because results is a symlink."""
+    root = Path(results_root)
+    if not root.exists():
+        return ""
+    suffix = "_{}_{}_{}_0".format(run_tag, dataset, model)
+    matches = sorted(
+        (path for path in root.iterdir() if path.is_dir() and path.name.endswith(suffix)),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return str(matches[0]) if matches else ""
 
 
 def safe_copy(src, dst):
@@ -208,6 +224,8 @@ def main():
             model = row.get("model", "")
             status = int(row.get("status", "1") or 1)
             result_dir = row.get("result_dir", "")
+            if status == 0 and not result_dir:
+                result_dir = discover_result_dir(args.results_root, run_tag, dataset, model)
             metrics = parse_metrics(result_dir) if status == 0 and result_dir else {name: np.nan for name in METRIC_NAMES}
 
             if result_dir and args.copy_result_arrays:

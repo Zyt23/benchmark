@@ -104,7 +104,8 @@ PY
     status=$?
     set -e
 
-    result_dir="$(find ./results -maxdepth 1 -type d -name "*${des}_0" -print -quit 2>/dev/null || true)"
+    # results may be a symlink to the large shared filesystem on the server.
+    result_dir="$(find -L ./results -maxdepth 1 -type d -name "*${des}_0" -print -quit 2>/dev/null || true)"
     printf '%s\t%s\t%s\t%s\t%s\n' "${dataset}" "${model}" "${status}" "${log_file}" "${result_dir}" >> "${SUMMARY_FILE}"
 
     if [[ "${status}" -ne 0 ]]; then
