@@ -64,6 +64,20 @@ def grab_metric(text, pattern, default=''):
     return matches[-1].strip() if matches else default
 
 
+def discover_result_dir(root, run_tag, dataset, model):
+    """Recover result paths omitted when the server result root is a symlink."""
+    results_root = root / 'results'
+    if not results_root.exists():
+        return None
+    suffix = '_{}_{}_{}_0'.format(run_tag, dataset, model)
+    matches = sorted(
+        (path for path in results_root.iterdir()
+         if path.is_dir() and path.name.endswith(suffix)),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True)
+    return matches[0] if matches else None
+
+
 def support_by_class(text):
     supports = {}
     for line in text.splitlines():
@@ -113,7 +127,12 @@ def collect_metrics(root, run_tags):
         model = row['model']
         status = int(row['status'])
         log_file = root / row['log'].lstrip('./')
-        result_dir = root / row['result_dir'].lstrip('./')
+        result_dir_text = row.get('result_dir', '').strip()
+        result_dir = root / result_dir_text.lstrip('./') if result_dir_text else None
+        if status == 0 and result_dir is None:
+            result_dir = discover_result_dir(root, row['run_tag'], dataset, model)
+        if result_dir is None:
+            result_dir = root / '__missing_result_dir__'
         result_file = result_dir / 'result_classification.txt'
 
         result_text = result_file.read_text(errors='replace') if result_file.exists() else ''
