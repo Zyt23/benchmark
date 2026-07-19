@@ -55,6 +55,33 @@ class Exp_Anomaly_Detection(Exp_Basic):
             tensor = tensor[:, :, -batch_x.shape[-1]:]
         return tensor
 
+    @staticmethod
+    def _association_kl(p, q):
+        values = p * (torch.log(p + 1e-4) - torch.log(q + 1e-4))
+        return torch.mean(torch.sum(values, dim=-1), dim=1)
+
+    def _anomaly_transformer_objectives(self, output, target):
+        reconstruction, series, prior = output[0], output[1], output[2]
+        reconstruction = self._align_tensor(target, reconstruction)
+        rec_loss = nn.functional.mse_loss(reconstruction, target)
+        series_loss = 0.0
+        prior_loss = 0.0
+        for series_u, prior_u in zip(series, prior):
+            prior_norm = prior_u / (prior_u.sum(dim=-1, keepdim=True) + 1e-12)
+            series_loss = series_loss + torch.mean(
+                self._association_kl(series_u, prior_norm.detach())
+                + self._association_kl(prior_norm.detach(), series_u)
+            )
+            prior_loss = prior_loss + torch.mean(
+                self._association_kl(prior_norm, series_u.detach())
+                + self._association_kl(series_u.detach(), prior_norm)
+            )
+        layer_count = max(1, len(prior))
+        series_loss = series_loss / layer_count
+        prior_loss = prior_loss / layer_count
+        association_k = float(getattr(self.args, 'anomaly_association_k', 3.0))
+        return rec_loss - association_k * series_loss, rec_loss + association_k * prior_loss
+
     def _training_loss(self, output, target, epoch_idx):
         model_name = str(self.args.model)
         mse = nn.MSELoss(reduction='none')
@@ -87,6 +114,22 @@ class Exp_Anomaly_Detection(Exp_Basic):
         model_name = str(self.args.model)
         mse = nn.MSELoss(reduction='none')
 
+        if model_name == 'AnomalyTransformer' and isinstance(output, (tuple, list)) and len(output) >= 4:
+            reconstruction, series, prior = output[0], output[1], output[2]
+            reconstruction = self._align_tensor(target, reconstruction)
+            reconstruction_error = torch.mean(mse(reconstruction, target), dim=-1)
+            series_loss = 0.0
+            prior_loss = 0.0
+            temperature = float(getattr(self.args, 'anomaly_temperature', 50.0))
+            for series_u, prior_u in zip(series, prior):
+                prior_norm = prior_u / (prior_u.sum(dim=-1, keepdim=True) + 1e-12)
+                series_loss = series_loss + self._association_kl(
+                    series_u, prior_norm.detach()) * temperature
+                prior_loss = prior_loss + self._association_kl(
+                    prior_norm, series_u.detach()) * temperature
+            association_weight = torch.softmax(-(series_loss + prior_loss), dim=-1)
+            return association_weight * reconstruction_error
+
         if model_name == 'USAD' and isinstance(output, (tuple, list)) and len(output) >= 3:
             ae1 = self._align_tensor(target, output[0])
             ae2ae1 = self._align_tensor(target, output[2])
@@ -101,16 +144,24 @@ class Exp_Anomaly_Detection(Exp_Basic):
 
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
+        total_loss2 = []
         self.model.eval()
         with torch.no_grad():
             for i, (batch_x, _) in enumerate(vali_loader):
                 batch_x = batch_x.float().to(self.device)
 
                 outputs = self.model(batch_x, None, None, None)
-                loss = self._score_tensor(outputs, batch_x).mean()
-                total_loss.append(loss.item())
+                if str(self.args.model) == 'AnomalyTransformer' and isinstance(outputs, (tuple, list)) and len(outputs) >= 4:
+                    loss1, loss2 = self._anomaly_transformer_objectives(outputs, batch_x)
+                    total_loss.append(loss1.item())
+                    total_loss2.append(loss2.item())
+                else:
+                    loss = self._score_tensor(outputs, batch_x).mean()
+                    total_loss.append(loss.item())
         total_loss = np.average(total_loss)
         self.model.train()
+        if total_loss2:
+            return total_loss, np.average(total_loss2)
         return total_loss
 
     def train(self, setting):
@@ -125,6 +176,8 @@ class Exp_Anomaly_Detection(Exp_Basic):
 
         train_steps = len(train_loader)
         early_stopping = EarlyStopping(patience=self.args.patience, verbose=True)
+        dual_best = None
+        dual_counter = 0
 
         model_optim = self._select_optimizer()
         criterion = self._select_criterion()
@@ -143,7 +196,16 @@ class Exp_Anomaly_Detection(Exp_Basic):
 
                 outputs = self.model(batch_x, None, None, None)
 
-                loss = self._training_loss(outputs, batch_x, epoch)
+                anomaly_transformer = (
+                    str(self.args.model) == 'AnomalyTransformer'
+                    and isinstance(outputs, (tuple, list))
+                    and len(outputs) >= 4
+                )
+                if anomaly_transformer:
+                    loss, loss2 = self._anomaly_transformer_objectives(outputs, batch_x)
+                else:
+                    loss = self._training_loss(outputs, batch_x, epoch)
+                    loss2 = None
                 train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
@@ -154,19 +216,42 @@ class Exp_Anomaly_Detection(Exp_Basic):
                     iter_count = 0
                     time_now = time.time()
 
-                loss.backward()
+                if loss2 is not None:
+                    # Minimax association learning from the official Anomaly
+                    # Transformer training procedure.
+                    loss.backward(retain_graph=True)
+                    loss2.backward()
+                else:
+                    loss.backward()
                 model_optim.step()
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
-            vali_loss = self.vali(vali_data, vali_loader, criterion)
-
-            print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f}".format(
-                epoch + 1, train_steps, train_loss, vali_loss))
-            early_stopping(vali_loss, self.model, path)
-            if early_stopping.early_stop:
-                print("Early stopping")
-                break
+            vali_result = self.vali(vali_data, vali_loader, criterion)
+            if isinstance(vali_result, tuple):
+                vali_loss, vali_loss2 = vali_result
+                print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss1: {3:.7f} Vali Loss2: {4:.7f}".format(
+                    epoch + 1, train_steps, train_loss, vali_loss, vali_loss2))
+                current = (float(vali_loss), float(vali_loss2))
+                if dual_best is None or (current[0] < dual_best[0] and current[1] < dual_best[1]):
+                    dual_best = current
+                    dual_counter = 0
+                    torch.save(self.model.state_dict(), os.path.join(path, 'checkpoint.pth'))
+                    print('Dual validation objectives improved. Saving model ...')
+                else:
+                    dual_counter += 1
+                    print('EarlyStopping counter: {} out of {}'.format(dual_counter, self.args.patience))
+                    if dual_counter >= self.args.patience:
+                        print("Early stopping")
+                        break
+            else:
+                vali_loss = vali_result
+                print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f}".format(
+                    epoch + 1, train_steps, train_loss, vali_loss))
+                early_stopping(vali_loss, self.model, path)
+                if early_stopping.early_stop:
+                    print("Early stopping")
+                    break
             adjust_learning_rate(model_optim, epoch + 1, self.args)
 
         best_model_path = path + '/' + 'checkpoint.pth'
