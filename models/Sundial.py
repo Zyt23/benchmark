@@ -16,6 +16,55 @@ def _patch_transformers_cache_for_sundial():
     if not hasattr(DynamicCache, "get_max_length") and hasattr(DynamicCache, "get_seq_length"):
         DynamicCache.get_max_length = DynamicCache.get_seq_length
 
+
+def _patch_sundial_generation_for_modern_transformers(model):
+    """Route modern Transformers' sampling entry point to Sundial's TS decoder.
+
+    Sundial's published checkpoint targets Transformers 4.40.1 and implements
+    continuous time-series generation in ``_greedy_search``.  Transformers
+    4.41+ routes both greedy and sampled decoding through ``_sample`` instead,
+    which silently bypasses Sundial's multi-patch decoder and eventually builds
+    invalid position ids.  Keep the repository-wide Transformers version and
+    adapt only this model instance.
+    """
+    try:
+        from packaging.version import Version
+        import transformers
+    except Exception:
+        return
+    if Version(transformers.__version__) < Version("4.41.0"):
+        return
+
+    sundial_greedy_search = model._greedy_search
+
+    def _sample_compat(
+        model_self,
+        input_ids,
+        logits_processor,
+        stopping_criteria,
+        generation_config,
+        synced_gpus,
+        streamer,
+        **model_kwargs,
+    ):
+        return sundial_greedy_search(
+            input_ids=input_ids,
+            logits_processor=logits_processor,
+            stopping_criteria=stopping_criteria,
+            pad_token_id=generation_config.pad_token_id,
+            eos_token_id=generation_config.eos_token_id,
+            output_attentions=generation_config.output_attentions,
+            output_hidden_states=generation_config.output_hidden_states,
+            output_scores=generation_config.output_scores,
+            output_logits=getattr(generation_config, "output_logits", None),
+            return_dict_in_generate=generation_config.return_dict_in_generate,
+            synced_gpus=synced_gpus,
+            streamer=streamer,
+            **model_kwargs,
+        )
+
+    model._sample = types.MethodType(_sample_compat, model)
+
 class Model(nn.Module):
     def __init__(self, configs):
         """
@@ -27,6 +76,7 @@ class Model(nn.Module):
         model_path = os.environ.get("SUNDIAL_MODEL_PATH", "thuml/sundial-base-128m")
         device = str(getattr(configs, "device", "cuda:0" if torch.cuda.is_available() else "cpu"))
         self.model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True).to(device).eval()
+        _patch_sundial_generation_for_modern_transformers(self.model)
         if not hasattr(self.model, "_extract_past_from_model_output"):
             def _extract_past_from_model_output(model_self, outputs, standardize_cache_format=False):
                 return getattr(outputs, "past_key_values", None)
@@ -47,19 +97,11 @@ class Model(nn.Module):
             if pad_len:
                 pad = series[:, :1].repeat(1, pad_len)
                 series = torch.cat([pad, series], dim=-1)
-            attention_mask = torch.ones(
-                series.shape[0],
-                series.shape[-1] // self.patch_len,
-                dtype=torch.long,
-                device=series.device,
-            )
             with torch.no_grad():
                 output = self.model.generate(
                     series,
-                    attention_mask=attention_mask,
                     max_new_tokens=self.pred_len,
                     num_samples=self.num_samples,
-                    use_cache=False,
                 )
             if output.ndim == 3:
                 output = output.mean(dim=1)
