@@ -359,6 +359,20 @@ def main():
     if not metrics:
         raise ValueError('No metrics collected')
 
+    # A sharded rerun can leave a non-zero summary row when an obsolete worker
+    # is stopped after a successful replacement shard has already completed.
+    # Keep one row per dataset/model, preferring a successful row and otherwise
+    # the later run tag supplied on the command line.
+    deduplicated = {}
+    for row in metrics:
+        key = (row.get('dataset', ''), row.get('model', ''))
+        previous = deduplicated.get(key)
+        current_ok = str(row.get('status', '')) in ('0', '0.0')
+        previous_ok = previous is not None and str(previous.get('status', '')) in ('0', '0.0')
+        if previous is None or current_ok or not previous_ok:
+            deduplicated[key] = row
+    metrics = list(deduplicated.values())
+
     all_fields = [
         'dataset', 'model', 'status', 'acc', 'accuracy', 'macro_f1', 'weighted_f1',
         'true_counts', 'pred_counts', 'TN', 'FP', 'FN', 'TP',
