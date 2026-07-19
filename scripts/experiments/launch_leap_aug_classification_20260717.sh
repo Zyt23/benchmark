@@ -3,8 +3,9 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 COMPACT_ROOT="${COMPACT_ROOT:-datasetall_tsfile_compact_leap_aug_cls_20260717}"
-LOG_ROOT="${LOG_ROOT:-experiment_artifacts/QAR_history80_leap_aug_20260717/server_logs/classification}"
-DATASETS="${DATASETS:-dataset9_aug0_1000 dataset9_aug0_2000 dataset9_aug0_4000 dataset9_aug0_19119 dataset10_aug0_1000 dataset10_aug0_2000 dataset10_aug0_4000 dataset10_aug0_19119 dataset12_aug0_1000 dataset12_aug0_2000 dataset12_aug0_4000 dataset12_aug0_19119}"
+ARTIFACT_ROOT="${ARTIFACT_ROOT:-experiment_artifacts/QAR_extra_experiments_20260717}"
+LOG_ROOT="${LOG_ROOT:-${ARTIFACT_ROOT}/server_logs/leap_aug_classification_20260719}"
+DATASETS="${DATASETS:-dataset12_aug0_2000 dataset12_aug0_4000 dataset12_aug0_6000 dataset12_aug0_10000 dataset12_aug0_20000}"
 MODELS="${MODELS:-Transformer TimesNet PatchTST DLinear iTransformer}"
 GPU_LIST="${GPU_LIST:-0 1 2 3 4}"
 RUN_TAG_PREFIX="${RUN_TAG_PREFIX:-leap_aug_cls}"
@@ -14,11 +15,19 @@ mkdir -p "${LOG_ROOT}"
 
 read -r -a gpus <<< "${GPU_LIST}"
 job_idx=0
+expected="${LOG_ROOT}/expected_jobs.tsv"
+printf "task\tvariant\tmodel\tdatasets\trun_tag\tcompact_root\n" > "${expected}"
+
+for model in ${MODELS}; do
+  run_tag="${RUN_TAG_PREFIX}_${model}_20260719"
+  printf "classification\tleap_aug0\t%s\t%s\t%s\t%s\n" \
+    "${model}" "${DATASETS}" "${run_tag}" "${COMPACT_ROOT}" >> "${expected}"
+done
 
 for model in ${MODELS}; do
   gpu="${gpus[$((job_idx % ${#gpus[@]}))]}"
   job_idx=$((job_idx + 1))
-  run_tag="${RUN_TAG_PREFIX}_${model}_20260717"
+  run_tag="${RUN_TAG_PREFIX}_${model}_20260719"
   log="${LOG_ROOT}/${run_tag}.launcher.log"
   pid_file="${LOG_ROOT}/${run_tag}.pid"
   echo "[launch] model=${model} gpu=${gpu} run_tag=${run_tag}"

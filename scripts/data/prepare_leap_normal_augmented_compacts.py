@@ -112,23 +112,72 @@ def instance_norm(x: np.ndarray, mask: np.ndarray) -> np.ndarray:
     return out
 
 
-def convert_df(df: pd.DataFrame, anchors: list[tuple[int, int, int, int]]) -> tuple[np.ndarray, np.ndarray]:
+def find_phase_anchor(phase: np.ndarray, fr: int, to: int) -> int | None:
+    """Find the row index used as the anchor for a phase transition.
+
+    Historical compact builders used the strict adjacent transition
+    ``phase[i] == fr and phase[i + 1] == to``.  Some newer CSV exports insert
+    fractional transition markers such as 0.1875 or 10.5625 between integer
+    phases.  For those files, falling back to "first integer `to` after an
+    earlier integer `fr`" keeps the intended phase-start semantics.
+    """
+    phase = np.asarray(phase)
+    direct = np.flatnonzero((phase[:-1] == fr) & (phase[1:] == to))
+    if direct.size:
+        return int(direct[0] + 1)
+
+    to_hits = np.flatnonzero(phase == to)
+    if not to_hits.size:
+        return None
+    fr_seen = np.zeros(phase.shape[0], dtype=bool)
+    seen = False
+    for i, value in enumerate(phase):
+        if value == fr:
+            seen = True
+        fr_seen[i] = seen
+    for center in to_hits:
+        if center > 0 and fr_seen[int(center) - 1]:
+            return int(center)
+    return None
+
+
+def _resolve_feature_columns(df: pd.DataFrame, feature_cols: list[str]) -> list[str]:
+    """Return dataframe columns matching ``feature_cols`` in the same order.
+
+    Matching is case-insensitive, but the returned names are the actual columns
+    present in the CSV.  This lets dataset14 use its native lowercase feature
+    names while the 320/321 datasets keep the historical uppercase names.
+    """
+    column_by_lower = {str(col).lower(): col for col in df.columns}
+    resolved = []
+    missing = []
+    for col in feature_cols:
+        key = str(col).lower()
+        if key in column_by_lower:
+            resolved.append(column_by_lower[key])
+        else:
+            missing.append(col)
+    if missing:
+        raise ValueError("missing features: " + ",".join([str(x) for x in missing[:8]]))
+    return resolved
+
+
+def convert_df(df: pd.DataFrame, anchors: list[tuple[int, int, int, int]],
+               feature_cols: list[str] | None = None) -> tuple[np.ndarray, np.ndarray]:
     if "FLIGHT_PHASE" not in df.columns:
         raise ValueError("missing FLIGHT_PHASE")
-    missing = [c for c in FEATURE_COLS if c not in df.columns]
-    if missing:
-        raise ValueError("missing features: " + ",".join(missing[:8]))
+    feature_cols = list(feature_cols or FEATURE_COLS)
+    resolved_feature_cols = _resolve_feature_columns(df, feature_cols)
 
     df = df.fillna(0.0)
     phase = df["FLIGHT_PHASE"].to_numpy(dtype=np.int64)
-    feat = df[FEATURE_COLS].to_numpy(dtype=np.float32)
+    feat = df[resolved_feature_cols].to_numpy(dtype=np.float32)
     pieces = []
     masks = []
     for fr, to, pre, post in anchors:
-        hits = np.flatnonzero((phase[:-1] == fr) & (phase[1:] == to))
-        if hits.size == 0:
+        center = find_phase_anchor(phase, fr, to)
+        if center is None:
             raise ValueError(f"missing {fr}->{to}")
-        center = int(hits[0] + 1)
         if center < pre:
             raise ValueError(f"pre_short {fr}->{to}")
         if feat.shape[0] - center < post:
@@ -154,10 +203,13 @@ def parse_list(text: str, default: Iterable[str]) -> list[str]:
     return [x.strip() for x in text.replace(",", " ").split() if x.strip()]
 
 
-def build_extra_cache(extra_zip: Path, cache_path: Path, anchors: list[tuple[int, int, int, int]], max_count: int | None) -> dict:
+def build_extra_cache(extra_zip: Path, cache_path: Path, anchors: list[tuple[int, int, int, int]],
+                      max_count: int | None, feature_cols: list[str] | None = None) -> dict:
+    feature_cols = list(feature_cols or FEATURE_COLS)
     if cache_path.exists():
         data = np.load(cache_path, allow_pickle=False)
-        if max_count is None or data["x"].shape[0] >= max_count:
+        cached_cols = data["feature_cols"].astype(str).tolist() if "feature_cols" in data.files else []
+        if cached_cols == feature_cols and (max_count is None or data["x"].shape[0] >= max_count):
             return {name: data[name] for name in data.files}
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,7 +224,7 @@ def build_extra_cache(extra_zip: Path, cache_path: Path, anchors: list[tuple[int
             try:
                 with zf.open(member) as handle:
                     df = pd.read_csv(handle)
-                x, mask = convert_df(df, anchors)
+                x, mask = convert_df(df, anchors, feature_cols=feature_cols)
                 rows.append((x, mask, member, time_key_from_source(member)))
                 status = "OK"
             except Exception as exc:
@@ -194,7 +246,7 @@ def build_extra_cache(extra_zip: Path, cache_path: Path, anchors: list[tuple[int
         mask=mask,
         labels=labels,
         class_names=np.asarray(["0", "1"]),
-        feature_cols=np.asarray(FEATURE_COLS),
+        feature_cols=np.asarray(feature_cols),
         phase_a_shift=np.asarray([-80], dtype=np.int64),
         sources=sources,
         time_keys=time_keys,
@@ -208,7 +260,7 @@ def build_extra_cache(extra_zip: Path, cache_path: Path, anchors: list[tuple[int
         "mask": mask,
         "labels": labels,
         "class_names": np.asarray(["0", "1"]),
-        "feature_cols": np.asarray(FEATURE_COLS),
+        "feature_cols": np.asarray(feature_cols),
         "phase_a_shift": np.asarray([-80], dtype=np.int64),
         "sources": sources,
         "time_keys": time_keys,
@@ -228,6 +280,14 @@ def load_base(path: Path) -> dict:
 def write_merged(base_cache: Path, extra: dict, count: int, out_path: Path) -> dict:
     base = load_base(base_cache)
     take = min(count, int(extra["x"].shape[0]))
+    base_feature_cols = base["feature_cols"].astype(str) if "feature_cols" in base else np.asarray(FEATURE_COLS)
+    extra_feature_cols = extra["feature_cols"].astype(str) if "feature_cols" in extra else np.asarray(FEATURE_COLS)
+    if list(base_feature_cols) != list(extra_feature_cols):
+        raise ValueError(
+            f"feature_cols mismatch: base={list(base_feature_cols)} extra={list(extra_feature_cols)}"
+        )
+    if int(base["x"].shape[2]) != int(extra["x"].shape[2]):
+        raise ValueError(f"feature dimension mismatch: base={base['x'].shape} extra={extra['x'].shape}")
     x = np.concatenate([base["x"].astype(np.float32), extra["x"][:take].astype(np.float32)], axis=0)
     mask = np.concatenate([base["mask"].astype(np.float32), extra["mask"][:take].astype(np.float32)], axis=0)
     labels = np.concatenate([base["labels"].astype(np.int64), extra["labels"][:take].astype(np.int64)], axis=0)
@@ -247,7 +307,7 @@ def write_merged(base_cache: Path, extra: dict, count: int, out_path: Path) -> d
         mask=mask,
         labels=labels,
         class_names=np.asarray(["0", "1"]),
-        feature_cols=np.asarray(FEATURE_COLS),
+        feature_cols=np.asarray(base_feature_cols),
         phase_a_shift=np.asarray([-80], dtype=np.int64),
         sources=sources,
         time_keys=time_keys,
@@ -271,7 +331,16 @@ def main() -> None:
     parser.add_argument("--forecast_output_root", type=Path, default=Path("datasetall_tsfile_compact_leap_aug_hist80_segments_20260717"))
     parser.add_argument("--work_root", type=Path, default=Path("datasetall_tsfile_work_leap_aug_20260717"))
     parser.add_argument("--datasets", default=" ".join(DEFAULT_DATASETS))
-    parser.add_argument("--counts", nargs="+", default=["1000", "2000", "4000", "all"])
+    parser.add_argument(
+        "--counts",
+        nargs="+",
+        default=["2000", "4000", "6000", "10000", "20000"],
+        help=(
+            "Requested numbers of extra normal flights. If fewer files pass "
+            "feature/phase validation, the compact uses all valid files and "
+            "records the shortfall in leap_aug_manifest.csv."
+        ),
+    )
     parser.add_argument("--tasks", nargs="+", default=["classification", "forecast"], choices=["classification", "forecast"])
     parser.add_argument("--anchors", default=" ".join(FORECAST_ANCHORS.keys()))
     args = parser.parse_args()
@@ -302,6 +371,9 @@ def main() -> None:
                     "dataset": dataset,
                     "aug_dataset": out_dataset,
                     "cache_file": str(out_path),
+                    "requested_extra_count": int(count),
+                    "available_valid_extra_count": int(cls_extra["x"].shape[0]),
+                    "extra_shortfall": max(0, int(count) - int(stats["extra_count"])),
                     **stats,
                 })
                 print(f"wrote {out_path}", flush=True)
@@ -327,6 +399,9 @@ def main() -> None:
                         "dataset": dataset,
                         "aug_dataset": out_dataset,
                         "cache_file": str(out_path),
+                        "requested_extra_count": int(count),
+                        "available_valid_extra_count": int(extra["x"].shape[0]),
+                        "extra_shortfall": max(0, int(count) - int(stats["extra_count"])),
                         **stats,
                     })
                     print(f"wrote {out_path}", flush=True)
