@@ -1331,7 +1331,8 @@ class QARCompactAnomalyDataset(Dataset):
     For anomaly detection we avoid using fault samples during training:
         train: chronological first 70% of normal samples
         val:   chronological next 10% of normal samples
-        test:  chronological last 20% of normal samples + all fault samples
+        test:  chronological last 20% of normal samples + chronological last
+               20% of fault samples
 
     Each long compact sequence is deterministically resampled to ``win_size``
     points using evenly spaced indices over the whole condition window. This

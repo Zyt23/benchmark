@@ -3,10 +3,10 @@ set -u
 
 # QAR one-class anomaly detection.
 #
-# Train/val use only normal samples (label 0). Test uses held-out normal samples
-# plus all fault samples. The threshold is selected from normal validation
-# reconstruction errors, so no fault/test labels are used for training or
-# thresholding.
+# Train/val use only normal samples (label 0). Test uses the chronological last
+# 20% of normal samples plus the chronological last 20% of fault samples. The
+# threshold is selected from normal validation reconstruction errors, so no
+# fault/test labels are used for training or thresholding.
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 COMPACT_ROOT="${COMPACT_ROOT:-datasetall_tsfile_compact_custom_cls_chrono_20260711}"
