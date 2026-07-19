@@ -53,7 +53,7 @@ FAULT_DESC = {
 MODEL_ORDER = [
     "OLinear", "xPatch", "TimeMixer++", "DUET", "TimeMixer", "TimeXer",
     "iTransformer", "DLinear", "PatchTST", "TimesNet", "Transformer",
-    "Autoformer", "TiRex", "Chronos2", "Toto", "Moirai", "Sundial",
+    "Autoformer", "TiRex-2", "TiRex", "Chronos2", "Toto", "Moirai", "Sundial",
     "MambaSL", "VSFormer", "LITE", "MultiROCKET", "MiniROCKET",
     "TabPFN", "KANAD", "AnomalyTransformer", "TranAD", "USAD",
     "OmniAnomaly",
@@ -65,8 +65,11 @@ FULL_SHOT_MODELS = [
     "Transformer",
 ]
 
+ZERO_SHOT_MODELS = ["TiRex-2", "TiRex", "Chronos2", "Toto", "Moirai", "Sundial"]
+
 UNAVAILABLE_MODELS = {
     "TimeMixer++": "UNAVAILABLE\n官方仓库尚未发布 TimeMixer++ 实现",
+    "TiRex-2": "GATED_WEIGHT\n官方权重需 Hugging Face 授权；当前环境无访问令牌",
 }
 
 AUGMENT_SUFFIXES = [
@@ -345,7 +348,13 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
             row += 1
         row += 2
     write_block("预测性维护（全监督）", forecast, forecast_cell, "anchor_key", FULL_SHOT_MODELS)
-    write_block("预测性维护（零样本时序大模型）", zero_shot, forecast_cell, "anchor_key")
+    write_block(
+        "预测性维护（零样本时序大模型）",
+        zero_shot,
+        forecast_cell,
+        "anchor_key",
+        ZERO_SHOT_MODELS,
+    )
     write_block("时序异常检测（纯单类 P95）", anomaly, anomaly_cell)
 
     if not shortcut_audit.empty:
