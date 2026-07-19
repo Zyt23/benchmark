@@ -350,7 +350,8 @@ def main():
     if output_dir.exists():
         if not args.force:
             raise FileExistsError('Refusing to overwrite {}'.format(output_dir))
-        if output_dir.parent.name != 'experiment_artifacts':
+        artifact_root = (root / 'experiment_artifacts').resolve()
+        if artifact_root not in output_dir.parents:
             raise ValueError('Refusing to remove non-artifact output {}'.format(output_dir))
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True)
