@@ -83,14 +83,17 @@ def epoch_info(log_text):
     test_acc_at_best = ''
     epochs_run = 0
     for line in log_text.splitlines():
+        # Current leakage-safe training logs contain TRAIN/VAL only. Keep the
+        # optional TEST parse for backward compatibility with historical runs.
         match = re.search(
-            r'Epoch:\s*(\d+),\s*Steps:.*?Vali Acc:\s*([0-9.]+).*?Test Acc:\s*([0-9.]+)',
+            r'Epoch:\s*(\d+),\s*Steps:.*?Vali Acc:\s*([0-9.]+)',
             line)
         if not match:
             continue
         epoch = int(match.group(1))
         val_acc = float(match.group(2))
-        test_acc = float(match.group(3))
+        test_match = re.search(r'Test Acc:\s*([0-9.]+)', line)
+        test_acc = float(test_match.group(1)) if test_match else ''
         epochs_run = max(epochs_run, epoch)
         if val_acc >= best_val_acc:
             best_val_acc = val_acc
@@ -180,8 +183,21 @@ def build_cache_manifest(root, datasets, compact_root='datasetall_compact'):
         labels = data['labels']
         class0 = int((labels == 0).sum())
         class1 = int((labels == 1).sum())
-        train = int(class0 * 0.7) + int(class1 * 0.7)
-        val = int(class0 * 0.1) + int(class1 * 0.1)
+        def split_bounds(n):
+            if n <= 0:
+                return 0, 0
+            if n == 1:
+                return 0, 0
+            if n == 2:
+                return 1, 1
+            train_end = max(1, min(int(n * 0.7), n - 2))
+            val_end = max(train_end + 1, min(int(n * 0.8), n - 1))
+            return train_end, val_end
+
+        train0, val_end0 = split_bounds(class0)
+        train1, val_end1 = split_bounds(class1)
+        train = train0 + train1
+        val = (val_end0 - train0) + (val_end1 - train1)
         test = int(labels.shape[0]) - train - val
         rows.append({
             'dataset': dataset,
@@ -257,7 +273,8 @@ def write_readme(output_dir, metrics, cache_rows, run_tags, remote_project, comp
     lines.append('- Models: {}'.format(', '.join(MODEL_ORDER)))
     lines.append('- Metrics columns: `acc` is kept as an alias of `accuracy`, followed by `macro_f1`, `weighted_f1`, and binary `TN/FP/FN/TP`.')
     lines.append('- Compact cache root: `{}`.'.format(compact_root))
-    lines.append('- Training setup: `phase_a_shift=-80`, `train_epochs=50`, `batch_size=128`; QAR classification uses deterministic per-class `70/10/20` TRAIN/VAL/TEST split, class weighting, and early stopping on validation `macro_f1`.')
+    lines.append('- Training setup: `phase_a_shift=-80`, up to `train_epochs=50`, model-specific batch sizes; QAR classification uses deterministic per-class `70/10/20` TRAIN/VAL/TEST split, class weighting, and early stopping on validation `macro_f1`.')
+    lines.append('- TEST is evaluated once only after loading the best validation checkpoint; it is not read or logged during training.')
     lines.append('')
     lines.append('## Summary')
     lines.append('')
