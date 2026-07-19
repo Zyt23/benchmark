@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-import sys
+import re
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -22,11 +23,82 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+META_FIELDS = [
+    "tail", "date", "month", "hour", "flight_no", "origin",
+    "destination", "route", "has_tail", "has_time", "pattern",
+]
 
-from analyze_tsfile_robustness import META_FIELDS, parse_source  # noqa: E402
+
+def parse_source(source: str) -> dict:
+    """Parse only diagnostic metadata from a QAR source filename."""
+    name = Path(str(source)).name
+    stem = name[:-7] if name.endswith(".tsfile") else Path(name).stem
+    parts = stem.split("_")
+    tail = date = time = flight_no = route = "UNKNOWN"
+    pattern = "unknown"
+    date_re = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    compact_date_re = re.compile(r"^\d{8}$")
+    compact_time_re = re.compile(r"^\d{6}$")
+    time_re = re.compile(r"^\d{2}-\d{2}-\d{2}$")
+    tail_re = re.compile(r"^[A-Z]-[A-Z0-9]+$")
+
+    if len(parts) >= 5 and tail_re.match(parts[0]) and date_re.match(parts[1]) and time_re.match(parts[2]):
+        tail, date, time, flight_no, route = parts[:5]
+        pattern = "tail_date_time_flight_route"
+    elif len(parts) >= 5 and tail_re.match(parts[0]) and compact_date_re.match(parts[2]) and compact_time_re.match(parts[3]):
+        tail = parts[0]
+        date = f"{parts[2][0:4]}-{parts[2][4:6]}-{parts[2][6:8]}"
+        time = f"{parts[3][0:2]}-{parts[3][2:4]}-{parts[3][4:6]}"
+        flight_no = parts[4]
+        pattern = "tail_archive_compactdate_time_flight"
+    elif len(parts) >= 4 and date_re.match(parts[0]) and time_re.match(parts[1]):
+        date, time, flight_no, route = parts[:4]
+        pattern = "date_time_flight_route"
+    elif len(parts) >= 3 and date_re.match(parts[0]):
+        date, flight_no, route = parts[:3]
+        pattern = "date_flight_route"
+    elif len(parts) >= 4 and tail_re.match(parts[0]) and date_re.match(parts[1]):
+        tail, date, flight_no, route = parts[:4]
+        pattern = "tail_date_flight_route"
+    elif len(parts) >= 2:
+        flight_no, route = parts[-2:]
+
+    origin = destination = "UNKNOWN"
+    export_match = re.match(
+        r"^(export-\d+)-([A-Z]-[A-Z0-9]+)-(\d{4}-\d{2}-\d{2})-([A-Z0-9]{4})-([A-Z0-9]{4})$",
+        stem,
+    )
+    if pattern == "unknown" and export_match:
+        flight_no, tail, date, origin, destination = export_match.groups()
+        route = f"{origin}-{destination}"
+        pattern = "export_tail_date_route"
+    elif "-" in route:
+        origin, destination = route.split("-", 1)
+
+    month = "UNKNOWN"
+    try:
+        month = datetime.strptime(date, "%Y-%m-%d").strftime("%Y-%m")
+    except ValueError:
+        pass
+    hour = "UNKNOWN"
+    if time != "UNKNOWN":
+        try:
+            hour = f"{int(time.split('-')[0]):02d}"
+        except (ValueError, IndexError):
+            pass
+    return {
+        "tail": tail,
+        "date": date,
+        "month": month,
+        "hour": hour,
+        "flight_no": flight_no,
+        "origin": origin or "UNKNOWN",
+        "destination": destination or "UNKNOWN",
+        "route": route,
+        "has_tail": "yes" if tail != "UNKNOWN" else "no",
+        "has_time": "yes" if time != "UNKNOWN" else "no",
+        "pattern": pattern,
+    }
 
 
 def split_bounds(n: int) -> tuple[int, int]:
