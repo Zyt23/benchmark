@@ -25,9 +25,12 @@ D_MODEL="${D_MODEL:-64}"
 D_FF="${D_FF:-128}"
 E_LAYERS="${E_LAYERS:-2}"
 N_HEADS="${N_HEADS:-4}"
-THRESHOLD_PERCENTILE="${THRESHOLD_PERCENTILE:-99.0}"
-THRESHOLD_SOURCE="${THRESHOLD_SOURCE:-val_mixed_best_f1}"
-SCORE_DIRECTION="${SCORE_DIRECTION:-auto}"
+# Pure one-class defaults: the threshold is computed automatically from the
+# normal validation scores only. No fault label is used for fitting, direction
+# selection, threshold selection, or checkpoint selection.
+THRESHOLD_PERCENTILE="${THRESHOLD_PERCENTILE:-95.0}"
+THRESHOLD_SOURCE="${THRESHOLD_SOURCE:-val}"
+SCORE_DIRECTION="${SCORE_DIRECTION:-high}"
 NUM_WORKERS="${NUM_WORKERS:-0}"
 CUDA_DEVICE="${CUDA_DEVICE:-${GPU:-0}}"
 LOCAL_GPU="${LOCAL_GPU:-0}"
