@@ -1,6 +1,6 @@
 from data_provider.data_loader import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom, Dataset_M4, PSMSegLoader, \
     MSLSegLoader, SMAPSegLoader, SMDSegLoader, SWATSegLoader, UEAloader, QARFlightDataset, QARFlightDatasetShift, \
-    QARCompactForecastDataset, QARCompactAnomalyDataset
+    QARCompactForecastDataset, QARCompactAnomalyDataset, QARForecastAnomalyDataset
 from data_provider.uea import collate_fn
 from torch.utils.data import DataLoader
 
@@ -20,7 +20,8 @@ data_dict = {
     'QAR': QARFlightDataset,
     'QAR_shift': QARFlightDatasetShift,
     'QAR_forecast': QARCompactForecastDataset,
-    'QAR_anomaly': QARCompactAnomalyDataset
+    'QAR_anomaly': QARCompactAnomalyDataset,
+    'QAR_forecast_anomaly': QARForecastAnomalyDataset
 }
 
 
@@ -29,7 +30,7 @@ def data_provider(args, flag):
     timeenc = 0 if args.embed != 'timeF' else 1
 
     flag_lower = str(flag).lower()
-    shuffle_flag = False if flag_lower in ('test', 'val', 'vali', 'valid', 'validation') else True
+    shuffle_flag = False if flag_lower in ('test', 'val', 'vali', 'valid', 'validation', 'threshold', 'thre') else True
     drop_last = False
     batch_size = args.batch_size
     freq = args.freq

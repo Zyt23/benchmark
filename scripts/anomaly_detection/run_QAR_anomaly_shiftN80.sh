@@ -14,7 +14,7 @@ RUN_TAG="${RUN_TAG:-qar_anomaly_oneclass_$(date +%Y%m%d_%H%M%S)}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 IS_TRAINING="${IS_TRAINING:-1}"
 DATASETS="${DATASETS:-dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14}"
-MODELS="${MODELS:-Transformer TimesNet PatchTST DLinear iTransformer}"
+MODELS="${MODELS:-KANAD AnomalyTransformer TranAD USAD OmniAnomaly}"
 
 SEQ_LEN="${SEQ_LEN:-200}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
@@ -26,12 +26,14 @@ D_FF="${D_FF:-128}"
 E_LAYERS="${E_LAYERS:-2}"
 N_HEADS="${N_HEADS:-4}"
 THRESHOLD_PERCENTILE="${THRESHOLD_PERCENTILE:-99.0}"
+THRESHOLD_SOURCE="${THRESHOLD_SOURCE:-val_mixed_best_f1}"
 NUM_WORKERS="${NUM_WORKERS:-0}"
 CUDA_DEVICE="${CUDA_DEVICE:-${GPU:-0}}"
 LOCAL_GPU="${LOCAL_GPU:-0}"
+CHECKPOINTS="${CHECKPOINTS:-/share/workspace/monren/prsov/qar_benchmark_checkpoints/anomaly/${RUN_TAG}}"
 
 SUMMARY_DIR="${SUMMARY_DIR:-logs/anomaly_detection/${RUN_TAG}}"
-mkdir -p "${SUMMARY_DIR}"
+mkdir -p "${SUMMARY_DIR}" "${CHECKPOINTS}"
 SUMMARY_FILE="${SUMMARY_DIR}/summary.tsv"
 if [ ! -f "${SUMMARY_FILE}" ]; then
   printf "dataset\tmodel\tstatus\tenc_in\troot_path\tlog_file\n" > "${SUMMARY_FILE}"
@@ -86,8 +88,9 @@ PY
       --learning_rate "${LEARNING_RATE}" \
       --num_workers "${NUM_WORKERS}" \
       --gpu "${LOCAL_GPU}" \
+      --checkpoints "${CHECKPOINTS}" \
       --des oneclass_val_threshold \
-      --anomaly_threshold_source val \
+      --anomaly_threshold_source "${THRESHOLD_SOURCE}" \
       --anomaly_threshold_percentile "${THRESHOLD_PERCENTILE}" \
       --anomaly_level window \
       > "${log_file}" 2>&1

@@ -16,7 +16,7 @@ if __name__ == '__main__':
 
     # basic config
     parser.add_argument('--task_name', type=str, required=True, default='long_term_forecast',
-                        help='task name, options:[long_term_forecast, short_term_forecast, imputation, classification, anomaly_detection]')
+                        help='task name, options:[long_term_forecast, short_term_forecast, imputation, classification, anomaly_detection, forecast_anomaly_detection]')
     parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
     parser.add_argument('--model_id', type=str, required=True, default='test', help='model id')
     parser.add_argument('--model', type=str, required=True, default='Autoformer',
@@ -51,13 +51,17 @@ if __name__ == '__main__':
 
     # anomaly detection task
     parser.add_argument('--anomaly_ratio', type=float, default=0.25, help='prior anomaly ratio (%%)')
-    parser.add_argument('--anomaly_threshold_source', type=str, default='combined',
-                        choices=['combined', 'train', 'val'],
-                        help='anomaly threshold source: TSLib default combined train+test, train only, or validation only')
+    parser.add_argument('--anomaly_threshold_source', type=str, default='val',
+                        choices=['combined', 'train', 'val', 'val_mixed_best_f1'],
+                        help='anomaly threshold source: TSLib default combined train+test, train only, validation only, or best F1 on validation normal+fault threshold split')
     parser.add_argument('--anomaly_threshold_percentile', type=float, default=99.0,
                         help='percentile used when anomaly_threshold_source is train or val')
     parser.add_argument('--anomaly_level', type=str, default='point', choices=['point', 'window'],
                         help='evaluate anomaly detection at point level or compact-window/sample level')
+    parser.add_argument('--forecast_anomaly_score', type=str, default='mse', choices=['mse', 'mae'],
+                        help='forecast_anomaly_detection: score used for thresholding')
+    parser.add_argument('--omni_beta', type=float, default=0.001,
+                        help='KL-divergence weight for the QAR OmniAnomaly adapter')
 
     # model define
     parser.add_argument('--expand', type=int, default=2, help='expansion factor for Mamba')
@@ -210,6 +214,9 @@ if __name__ == '__main__':
     elif args.task_name == 'anomaly_detection':
         from exp.exp_anomaly_detection import Exp_Anomaly_Detection
         Exp = Exp_Anomaly_Detection
+    elif args.task_name == 'forecast_anomaly_detection':
+        from exp.exp_forecast_anomaly_detection import Exp_Forecast_Anomaly_Detection
+        Exp = Exp_Forecast_Anomaly_Detection
     elif args.task_name == 'classification':
         from exp.exp_classification import Exp_Classification
         Exp = Exp_Classification

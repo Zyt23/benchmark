@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Collect QAR one-class anomaly-detection metrics into dataset/model tables."""
+"""Collect QAR anomaly-detection metrics into dataset/model tables."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ import pandas as pd
 
 
 DEFAULT_MODELS = ["Transformer", "TimesNet", "PatchTST", "DLinear", "iTransformer"]
-
 
 DATASET_NAMES = {
     "dataset5": "320-感压管路故障",
@@ -31,25 +30,35 @@ DATASET_NAMES = {
 
 
 def parse_setting(setting: str, run_tag: str, models: list[str]) -> tuple[str, str] | None:
-    prefix = f"anomaly_detection_{run_tag}_"
-    if not setting.startswith(prefix):
+    prefixes = [
+        f"anomaly_detection_{run_tag}_",
+        f"forecast_anomaly_detection_{run_tag}_",
+    ]
+    rest = None
+    for prefix in prefixes:
+        if setting.startswith(prefix):
+            rest = setting[len(prefix):]
+            break
+    if rest is None:
         return None
-    rest = setting[len(prefix):]
-    # Longer model names first avoids accidental substring matches.
+
     for model in sorted(models, key=len, reverse=True):
-        marker = f"_{model}_QAR_anomaly_"
-        if marker in rest:
-            dataset = rest.split(marker, 1)[0]
-            return dataset, model
+        markers = [
+            f"_{model}_QAR_anomaly_",
+            f"_{model}_QAR_forecast_anomaly_",
+            f"_{model}_QAR_forecast_head_anomaly_",
+            f"_{model}_QAR_forecast_",
+        ]
+        for marker in markers:
+            if marker in rest:
+                return rest.split(marker, 1)[0], model
     return None
 
 
 def read_metric(path: Path) -> dict | None:
     with path.open("r", encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
-    if not rows:
-        return None
-    return rows[-1]
+    return rows[-1] if rows else None
 
 
 def main() -> None:
@@ -59,6 +68,8 @@ def main() -> None:
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--datasets", nargs="*", default=list(DATASET_NAMES))
     parser.add_argument("--models", nargs="*", default=DEFAULT_MODELS)
+    parser.add_argument("--metric_file_name", default="anomaly_metrics.csv",
+                        help="metric filename, e.g. anomaly_metrics.csv or forecast_anomaly_metrics.csv")
     args = parser.parse_args()
 
     results_root = Path(args.results_root)
@@ -67,7 +78,7 @@ def main() -> None:
     tables_dir.mkdir(parents=True, exist_ok=True)
 
     records: list[dict] = []
-    for metric_path in results_root.glob("*/anomaly_metrics.csv"):
+    for metric_path in results_root.glob(f"*/{args.metric_file_name}"):
         row = read_metric(metric_path)
         if not row:
             continue
@@ -84,21 +95,37 @@ def main() -> None:
                 "dataset": dataset,
                 "fault": DATASET_NAMES.get(dataset, ""),
                 "model": model,
-                "accuracy": float(row["accuracy"]),
-                "precision": float(row["precision"]),
-                "recall": float(row["recall"]),
-                "f1": float(row["f1"]),
-                "true_counts": row["true_counts"],
-                "pred_counts": row["pred_counts"],
-                "TN": int(row["TN"]),
-                "FP": int(row["FP"]),
-                "FN": int(row["FN"]),
-                "TP": int(row["TP"]),
-                "threshold": float(row["threshold"]),
-                "threshold_source": row["threshold_source"],
-                "threshold_percentile": float(row["threshold_percentile"]),
-                "level": row["level"],
-                "setting": row["setting"],
+                "accuracy": float(row.get("accuracy", "nan")),
+                "balanced_accuracy": float(row.get("balanced_accuracy", "nan")),
+                "precision": float(row.get("precision", "nan")),
+                "recall": float(row.get("recall", "nan")),
+                "f1": float(row.get("f1", "nan")),
+                "macro_f1": float(row.get("macro_f1", "nan")),
+                "roc_auc": float(row.get("roc_auc", "nan")),
+                "pr_auc": float(row.get("pr_auc", "nan")),
+                "roc_auc_inverted": float(row.get("roc_auc_inverted", "nan")),
+                "true_counts": row.get("true_counts", ""),
+                "pred_counts": row.get("pred_counts", ""),
+                "TN": int(float(row.get("TN", "nan"))),
+                "FP": int(float(row.get("FP", "nan"))),
+                "FN": int(float(row.get("FN", "nan"))),
+                "TP": int(float(row.get("TP", "nan"))),
+                "threshold": float(row.get("threshold", "nan")),
+                "threshold_source": row.get("threshold_source", ""),
+                "threshold_percentile": float(row.get("threshold_percentile", "nan")),
+                "level": row.get("level", row.get("score", "")),
+                "score_direction": row.get("score_direction", ""),
+                "normal_score_mean": float(row.get("normal_score_mean", "nan")),
+                "fault_score_mean": float(row.get("fault_score_mean", "nan")),
+                "normal_score_median": float(row.get("normal_score_median", "nan")),
+                "fault_score_median": float(row.get("fault_score_median", "nan")),
+                "normal_score_p95": float(row.get("normal_score_p95", "nan")),
+                "fault_score_p95": float(row.get("fault_score_p95", "nan")),
+                "threshold_val_accuracy": float(row.get("threshold_val_accuracy", "nan")),
+                "threshold_val_precision": float(row.get("threshold_val_precision", "nan")),
+                "threshold_val_recall": float(row.get("threshold_val_recall", "nan")),
+                "threshold_val_f1": float(row.get("threshold_val_f1", "nan")),
+                "setting": row.get("setting", metric_path.parent.name),
                 "metric_file": str(metric_path),
             }
         )
@@ -119,9 +146,10 @@ def main() -> None:
 
     readme = output_dir / "README.md"
     with readme.open("w", encoding="utf-8") as f:
-        f.write("# QAR one-class anomaly detection\n\n")
-        f.write("实验设置：训练和验证只使用正常类 0；测试使用保留正常类 + 全部故障类 1。\n")
-        f.write("异常分数为重构误差，阈值来自正常验证集分位数；指标按整条工况窗口/window 计算。\n\n")
+        f.write("# QAR anomaly detection\n\n")
+        f.write("- 训练：默认只使用正常类 0。\n")
+        f.write("- 阈值：来自正常验证集分位数，或来自验证集正常+故障的 best-F1 阈值；不使用测试集选阈值。\n")
+        f.write("- 测试：按窗口级别统计 accuracy / precision / recall / f1 / TN / FP / FN / TP。\n\n")
         f.write(f"- run_tag: `{args.run_tag}`\n")
         f.write(f"- all metrics: `{all_csv.name}`\n\n")
         for dataset in args.datasets:
@@ -130,22 +158,13 @@ def main() -> None:
                 continue
             f.write(f"## {dataset}: {DATASET_NAMES.get(dataset, '')}\n\n")
             cols = [
-                "model",
-                "accuracy",
-                "precision",
-                "recall",
-                "f1",
-                "true_counts",
-                "pred_counts",
-                "TN",
-                "FP",
-                "FN",
-                "TP",
+                "model", "accuracy", "precision", "recall", "f1",
+                "true_counts", "pred_counts", "TN", "FP", "FN", "TP",
             ]
             f.write(sub[cols].to_markdown(index=False))
             f.write("\n\n")
 
-    xlsx = output_dir / "QAR_oneclass_anomaly_results.xlsx"
+    xlsx = output_dir / "QAR_anomaly_results.xlsx"
     with pd.ExcelWriter(xlsx, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="all_anomaly_metrics", index=False)
         for dataset in args.datasets:

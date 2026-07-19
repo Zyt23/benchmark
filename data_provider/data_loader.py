@@ -1349,8 +1349,11 @@ class QARCompactAnomalyDataset(Dataset):
         self.flag = str(flag).lower()
         if self.flag in ('vali', 'valid', 'validation'):
             self.flag = 'val'
-        if self.flag not in ('train', 'val', 'test'):
-            raise ValueError('QARCompactAnomalyDataset flag must be train/val/test, got {}'.format(flag))
+        if self.flag == 'thre':
+            self.flag = 'threshold'
+        if self.flag not in ('train', 'val', 'threshold', 'test'):
+            raise ValueError(
+                'QARCompactAnomalyDataset flag must be train/val/threshold/test, got {}'.format(flag))
 
         data_path = getattr(args, 'data_path', 'qar_compact_shiftN80.npz')
         cache_path = os.path.join(root_path, data_path)
@@ -1391,33 +1394,37 @@ class QARCompactAnomalyDataset(Dataset):
         normal_indices = all_indices[self._labels == 0]
         fault_indices = all_indices[self._labels != 0]
 
-        normal_sorted = sorted(
-            normal_indices.tolist(),
-            key=lambda i: (int(self._time_keys[int(i)]), str(self._sources[int(i)]), int(i)),
-        )
-        n_normal = len(normal_sorted)
-        train_end = int(n_normal * self.NORMAL_SPLIT_RATIOS[0])
-        val_end = int(n_normal * (self.NORMAL_SPLIT_RATIOS[0] + self.NORMAL_SPLIT_RATIOS[1]))
-        if n_normal > 0:
-            train_end = max(1, train_end)
-            val_end = max(train_end + 1, val_end) if n_normal >= 3 else n_normal
-            val_end = min(val_end, n_normal)
+        def sorted_indices(indices):
+            return sorted(
+                [int(i) for i in indices],
+                key=lambda i: (int(self._time_keys[i]), str(self._sources[i]), int(i)),
+            )
+
+        def split_group(indices):
+            ordered = sorted_indices(indices)
+            train_end, val_end = QARFlightDataset._split_bounds_keep_test(len(ordered))
+            return ordered[:train_end], ordered[train_end:val_end], ordered[val_end:]
+
+        normal_train, normal_val, normal_test = split_group(normal_indices)
+        _fault_train_unused, fault_val, fault_test = split_group(fault_indices)
 
         if self.flag == 'train':
-            selected = normal_sorted[:train_end]
+            selected = normal_train
         elif self.flag == 'val':
-            selected = normal_sorted[train_end:val_end]
+            selected = normal_val
             if not selected:
-                selected = normal_sorted[max(0, train_end - 1):train_end]
-        else:
-            normal_test = normal_sorted[val_end:]
-            fault_sorted = sorted(
-                fault_indices.tolist(),
-                key=lambda i: (int(self._time_keys[int(i)]), str(self._sources[int(i)]), int(i)),
-            )
+                selected = normal_train[-1:]
+        elif self.flag == 'threshold':
             selected = sorted(
-                normal_test + fault_sorted,
-                key=lambda i: (int(self._time_keys[int(i)]), str(self._sources[int(i)]), int(i)),
+                list(normal_val) + list(fault_val),
+                key=lambda i: (int(self._time_keys[i]), str(self._sources[i]), int(i)),
+            )
+            if not selected:
+                selected = normal_val if normal_val else normal_train[-1:]
+        else:
+            selected = sorted(
+                list(normal_test) + list(fault_test),
+                key=lambda i: (int(self._time_keys[i]), str(self._sources[i]), int(i)),
             )
 
         self.samples = np.asarray(selected, dtype=np.int64)
@@ -1594,6 +1601,181 @@ class QARCompactForecastDataset(Dataset):
         seq_x_mark = self._stamp[s_begin:s_end]
         seq_y_mark = self._stamp[r_begin:r_end]
         return seq_x, seq_y, seq_x_mark, seq_y_mark
+
+    def __len__(self):
+        return len(self.samples)
+
+    def inverse_transform(self, data):
+        return data
+
+
+class QARForecastAnomalyDataset(Dataset):
+    """
+    Forecast-error anomaly adapter for QAR compact caches.
+
+    The compact cache is expected to contain one sample per flight/condition
+    window:
+
+        x:      (N, T, C)
+        mask:   (N, T)
+        labels: (N,), 0=normal, non-zero=fault
+
+    This dataset keeps the forecasting layout used by ``QARCompactForecastDataset``
+    but changes the split for anomaly detection:
+
+        train:     chronological first 70% of normal samples only
+        val:       chronological next 10% of normal samples only
+        threshold: validation normal + validation fault samples
+        test:      chronological last 20% of normal + last 20% of fault samples
+
+    Fault samples are never used for fitting model weights.  They can be used in
+    the ``threshold`` split only when the experiment explicitly asks for
+    supervised threshold selection, e.g. ``anomaly_threshold_source`` set to
+    ``val_mixed_best_f1``.  This avoids selecting a threshold on the test set.
+    """
+
+    SPLIT_RATIOS = (0.7, 0.1, 0.2)
+
+    def __init__(self, args, root_path, flag='train', size=None,
+                 features='M', data_path='qar_compact_shiftN80.npz',
+                 target='OT', scale=False, timeenc=1, freq='h', seasonal_patterns=None):
+        if size is None:
+            self.seq_len = 60
+            self.label_len = 20
+            self.pred_len = 20
+        else:
+            self.seq_len, self.label_len, self.pred_len = [int(v) for v in size]
+
+        self.args = args
+        self.root_path = root_path
+        self.flag = str(flag).lower()
+        if self.flag in ('vali', 'valid', 'validation'):
+            self.flag = 'val'
+        if self.flag == 'thre':
+            self.flag = 'threshold'
+        if self.flag not in ('train', 'val', 'threshold', 'test'):
+            raise ValueError('QARForecastAnomalyDataset flag must be train/val/threshold/test, got {}'.format(flag))
+
+        self.features = features
+        self.target = target
+        self.scale = False
+        self.timeenc = timeenc
+        self.freq = freq
+
+        cache_path = os.path.join(root_path, data_path)
+        if not os.path.isfile(cache_path):
+            cache_path = os.path.join(root_path, 'qar_compact_shiftN80.npz')
+        if not os.path.isfile(cache_path):
+            raise FileNotFoundError('QAR forecast anomaly compact cache not found under {}'.format(root_path))
+
+        cache = np.load(cache_path, allow_pickle=False)
+        x = np.asarray(cache['x'], dtype=np.float32)
+        if x.ndim != 3:
+            raise ValueError('Expected compact x with shape (N,T,C), got {}'.format(x.shape))
+        x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+        labels = cache['labels'].astype(np.int64, copy=False) if 'labels' in cache.files else np.zeros(x.shape[0], dtype=np.int64)
+        mask = np.asarray(cache['mask'], dtype=np.float32) if 'mask' in cache.files else np.ones(x.shape[:2], dtype=np.float32)
+
+        if 'feature_cols' in cache.files:
+            self.feature_cols = cache['feature_cols'].astype(str).tolist()
+        else:
+            self.feature_cols = ['var_{}'.format(i) for i in range(x.shape[2])]
+
+        if 'sources' in cache.files:
+            sources = cache['sources'].astype(str)
+        else:
+            sources = np.asarray([str(i) for i in range(labels.shape[0])])
+        if 'time_keys' in cache.files:
+            time_keys = cache['time_keys'].astype(np.int64, copy=False)
+        else:
+            time_keys = np.asarray([qar_time_key_int(src) for src in sources], dtype=np.int64)
+
+        required_len = self.seq_len + self.pred_len
+        if x.shape[1] < required_len:
+            raise ValueError(
+                'Forecast anomaly window too short: T={}, need seq_len + pred_len = {}'.format(
+                    x.shape[1], required_len))
+
+        valid_prefix = mask[:, :required_len].sum(axis=1) >= required_len
+        all_indices = np.flatnonzero(valid_prefix)
+        normal_indices = all_indices[labels[all_indices] == 0]
+        fault_indices = all_indices[labels[all_indices] != 0]
+
+        def sorted_indices(indices):
+            return sorted(
+                [int(i) for i in indices],
+                key=lambda i: (int(time_keys[i]), str(sources[i]), int(i)),
+            )
+
+        def split_group(indices):
+            ordered = sorted_indices(indices)
+            train_end, val_end = QARFlightDataset._split_bounds_keep_test(len(ordered))
+            return ordered[:train_end], ordered[train_end:val_end], ordered[val_end:]
+
+        normal_train, normal_val, normal_test = split_group(normal_indices)
+        _fault_train_discard, fault_val, fault_test = split_group(fault_indices)
+
+        if self.flag == 'train':
+            selected = normal_train
+        elif self.flag == 'val':
+            selected = normal_val if normal_val else normal_train[-1:]
+        elif self.flag == 'threshold':
+            selected = sorted(
+                list(normal_val) + list(fault_val),
+                key=lambda i: (int(time_keys[i]), str(sources[i]), int(i)),
+            )
+            if not selected:
+                selected = normal_val if normal_val else normal_train[-1:]
+        else:
+            selected = sorted(
+                list(normal_test) + list(fault_test),
+                key=lambda i: (int(time_keys[i]), str(sources[i]), int(i)),
+            )
+
+        if not selected:
+            raise ValueError('No valid QAR forecast anomaly samples for flag={} in {}'.format(self.flag, cache_path))
+
+        self._all_x = x
+        self._all_labels = (labels != 0).astype(np.int64)
+        self._all_mask = mask
+        self._sources = sources
+        self._time_keys = time_keys
+        self.samples = np.asarray(selected, dtype=np.int64)
+        self.cache_path = cache_path
+        self.max_seq_len = int(x.shape[1])
+        self.feature_df = pd.DataFrame(columns=self.feature_cols)
+        self.class_names = ['0', '1']
+        self._stamp = np.zeros((self.max_seq_len, 4), dtype=np.float32)
+
+        selected_labels = self._all_labels[self.samples]
+        counts = np.bincount(selected_labels, minlength=2)
+        first_i = int(self.samples[0])
+        last_i = int(self.samples[-1])
+        print('{} samples: {} (QAR forecast anomaly cache: {}, x_shape={}, labels={}, time_range={}..{})'.format(
+            self.flag,
+            len(self.samples),
+            cache_path,
+            tuple(x.shape),
+            counts.tolist(),
+            int(time_keys[first_i]),
+            int(time_keys[last_i]),
+        ))
+
+    def __getitem__(self, index):
+        cache_idx = int(self.samples[index])
+        seq = self._all_x[cache_idx]
+
+        s_begin = 0
+        s_end = s_begin + self.seq_len
+        r_begin = s_end - self.label_len
+        r_end = r_begin + self.label_len + self.pred_len
+
+        seq_x = seq[s_begin:s_end]
+        seq_y = seq[r_begin:r_end]
+        seq_x_mark = self._stamp[s_begin:s_end]
+        seq_y_mark = self._stamp[r_begin:r_end]
+        label = np.asarray([self._all_labels[cache_idx]], dtype=np.int64)
+        return seq_x, seq_y, seq_x_mark, seq_y_mark, label
 
     def __len__(self):
         return len(self.samples)

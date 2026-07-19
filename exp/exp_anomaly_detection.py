@@ -1,15 +1,21 @@
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
 from utils.tools import EarlyStopping, adjust_learning_rate, adjustment
-from sklearn.metrics import precision_recall_fscore_support
-from sklearn.metrics import accuracy_score
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    balanced_accuracy_score,
+    confusion_matrix,
+    precision_recall_fscore_support,
+    roc_auc_score,
+)
 import torch.multiprocessing
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 import torch
 import torch.nn as nn
 from torch import optim
+import csv
 import os
 import time
 import warnings
@@ -41,6 +47,58 @@ class Exp_Anomaly_Detection(Exp_Basic):
         criterion = nn.MSELoss()
         return criterion
 
+    @staticmethod
+    def _align_tensor(batch_x, tensor):
+        if tensor.shape[1] != batch_x.shape[1]:
+            tensor = tensor[:, -batch_x.shape[1]:, :]
+        if tensor.shape[-1] != batch_x.shape[-1]:
+            tensor = tensor[:, :, -batch_x.shape[-1]:]
+        return tensor
+
+    def _training_loss(self, output, target, epoch_idx):
+        model_name = str(self.args.model)
+        mse = nn.MSELoss(reduction='none')
+
+        if model_name == 'USAD' and isinstance(output, (tuple, list)) and len(output) >= 3:
+            ae1, ae2, ae2ae1 = [self._align_tensor(target, item) for item in output[:3]]
+            n = float(epoch_idx + 1)
+            loss1 = (1.0 / n) * mse(ae1, target) + (1.0 - 1.0 / n) * mse(ae2ae1, target)
+            loss2 = (1.0 / n) * mse(ae2, target) - (1.0 - 1.0 / n) * mse(ae2ae1, target)
+            return (loss1 + loss2).mean()
+
+        if model_name == 'TranAD' and isinstance(output, (tuple, list)) and len(output) >= 2:
+            phase1, phase2 = [self._align_tensor(target, item) for item in output[:2]]
+            n = float(epoch_idx + 1)
+            return ((1.0 / n) * mse(phase1, target) + (1.0 - 1.0 / n) * mse(phase2, target)).mean()
+
+        if model_name == 'OmniAnomaly' and isinstance(output, (tuple, list)) and len(output) >= 3:
+            reconstruction = self._align_tensor(target, output[0])
+            mu, logvar = output[1], output[2]
+            reconstruction_loss = mse(reconstruction, target).mean()
+            kld = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+            beta = float(getattr(self.args, 'omni_beta', 0.001))
+            return reconstruction_loss + beta * kld
+
+        reconstruction = output[0] if isinstance(output, (tuple, list)) else output
+        reconstruction = self._align_tensor(target, reconstruction)
+        return mse(reconstruction, target).mean()
+
+    def _score_tensor(self, output, target):
+        model_name = str(self.args.model)
+        mse = nn.MSELoss(reduction='none')
+
+        if model_name == 'USAD' and isinstance(output, (tuple, list)) and len(output) >= 3:
+            ae1 = self._align_tensor(target, output[0])
+            ae2ae1 = self._align_tensor(target, output[2])
+            return torch.mean(0.1 * mse(ae1, target) + 0.9 * mse(ae2ae1, target), dim=-1)
+
+        if model_name == 'TranAD' and isinstance(output, (tuple, list)) and len(output) >= 2:
+            reconstruction = self._align_tensor(target, output[1])
+        else:
+            reconstruction = output[0] if isinstance(output, (tuple, list)) else output
+            reconstruction = self._align_tensor(target, reconstruction)
+        return torch.mean(mse(reconstruction, target), dim=-1)
+
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
         self.model.eval()
@@ -49,13 +107,7 @@ class Exp_Anomaly_Detection(Exp_Basic):
                 batch_x = batch_x.float().to(self.device)
 
                 outputs = self.model(batch_x, None, None, None)
-
-                f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs[:, :, f_dim:]
-                pred = outputs.detach()
-                true = batch_x.detach()
-
-                loss = criterion(pred, true)
+                loss = self._score_tensor(outputs, batch_x).mean()
                 total_loss.append(loss.item())
         total_loss = np.average(total_loss)
         self.model.train()
@@ -64,7 +116,6 @@ class Exp_Anomaly_Detection(Exp_Basic):
     def train(self, setting):
         train_data, train_loader = self._get_data(flag='train')
         vali_data, vali_loader = self._get_data(flag='val')
-        test_data, test_loader = self._get_data(flag='test')
 
         path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(path):
@@ -92,9 +143,7 @@ class Exp_Anomaly_Detection(Exp_Basic):
 
                 outputs = self.model(batch_x, None, None, None)
 
-                f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs[:, :, f_dim:]
-                loss = criterion(outputs, batch_x)
+                loss = self._training_loss(outputs, batch_x, epoch)
                 train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
@@ -111,10 +160,9 @@ class Exp_Anomaly_Detection(Exp_Basic):
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
-            test_loss = self.vali(test_data, test_loader, criterion)
 
-            print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
-                epoch + 1, train_steps, train_loss, vali_loss, test_loss))
+            print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f}".format(
+                epoch + 1, train_steps, train_loss, vali_loss))
             early_stopping(vali_loss, self.model, path)
             if early_stopping.early_stop:
                 print("Early stopping")
@@ -126,14 +174,45 @@ class Exp_Anomaly_Detection(Exp_Basic):
 
         return self.model
 
+    @staticmethod
+    def _best_f1_threshold(scores, labels):
+        scores = np.asarray(scores, dtype=np.float64).reshape(-1)
+        labels = np.asarray(labels, dtype=np.int64).reshape(-1)
+        if scores.size == 0 or np.unique(labels).size < 2:
+            return None, {}
+
+        percentiles = np.linspace(0.0, 100.0, 1001)
+        candidates = np.unique(np.percentile(scores, percentiles))
+        best = None
+        for threshold in candidates:
+            pred = (scores > threshold).astype(np.int64)
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                labels, pred, average='binary', zero_division=0)
+            accuracy = accuracy_score(labels, pred)
+            current = (float(f1), float(recall), float(precision), float(accuracy), -float(threshold))
+            if best is None or current > best[0]:
+                best = (current, float(threshold))
+
+        metrics, threshold = best
+        return threshold, {
+            'threshold_val_f1': metrics[0],
+            'threshold_val_recall': metrics[1],
+            'threshold_val_precision': metrics[2],
+            'threshold_val_accuracy': metrics[3],
+        }
+
     def test(self, setting, test=0):
         test_data, test_loader = self._get_data(flag='test')
         train_data, train_loader = self._get_data(flag='train')
         vali_data, vali_loader = self._get_data(flag='val')
+        threshold_source = getattr(self.args, 'anomaly_threshold_source', 'val')
+        threshold_data = threshold_loader = None
+        if threshold_source == 'val_mixed_best_f1':
+            threshold_data, threshold_loader = self._get_data(flag='threshold')
         if test:
             print('loading model')
             self.model.load_state_dict(torch.load(
-                os.path.join('./checkpoints/' + setting, 'checkpoint.pth'),
+                os.path.join(self.args.checkpoints, setting, 'checkpoint.pth'),
                 map_location=self.device,
             ))
 
@@ -147,15 +226,6 @@ class Exp_Anomaly_Detection(Exp_Basic):
         self.model.eval()
         self.anomaly_criterion = nn.MSELoss(reduction='none')
 
-        def _align_outputs(batch_x, outputs):
-            if isinstance(outputs, tuple):
-                outputs = outputs[0]
-            if outputs.shape[1] != batch_x.shape[1]:
-                outputs = outputs[:, -batch_x.shape[1]:, :]
-            if outputs.shape[-1] != batch_x.shape[-1]:
-                outputs = outputs[:, :, -batch_x.shape[-1]:]
-            return outputs
-
         def _collect_energy(loader):
             point_energy = []
             window_energy = []
@@ -165,8 +235,7 @@ class Exp_Anomaly_Detection(Exp_Basic):
                 for i, (batch_x, batch_y) in enumerate(loader):
                     batch_x = batch_x.float().to(self.device)
                     outputs = self.model(batch_x, None, None, None)
-                    outputs = _align_outputs(batch_x, outputs)
-                    score = torch.mean(self.anomaly_criterion(batch_x, outputs), dim=-1)
+                    score = self._score_tensor(outputs, batch_x)
                     score_np = score.detach().cpu().numpy()
                     point_energy.append(score_np.reshape(-1))
                     window_energy.append(score_np.mean(axis=1))
@@ -190,9 +259,14 @@ class Exp_Anomaly_Detection(Exp_Basic):
         train_point_energy, train_window_energy, _, _ = _collect_energy(train_loader)
         val_point_energy, val_window_energy, _, _ = _collect_energy(vali_loader)
         test_point_energy, test_window_energy, test_point_labels, test_window_labels = _collect_energy(test_loader)
+        if threshold_loader is not None:
+            threshold_point_energy, threshold_window_energy, threshold_point_labels, threshold_window_labels = _collect_energy(
+                threshold_loader)
+        else:
+            threshold_point_energy = threshold_window_energy = np.asarray([], dtype=np.float64)
+            threshold_point_labels = threshold_window_labels = np.asarray([], dtype=np.int64)
 
         level = getattr(self.args, 'anomaly_level', 'point')
-        threshold_source = getattr(self.args, 'anomaly_threshold_source', 'combined')
         threshold_percentile = float(getattr(self.args, 'anomaly_threshold_percentile', 99.0))
 
         if level == 'window':
@@ -200,19 +274,35 @@ class Exp_Anomaly_Detection(Exp_Basic):
             val_energy = val_window_energy
             test_energy = test_window_energy
             gt = test_window_labels
+            threshold_energy = threshold_window_energy
+            threshold_labels = threshold_window_labels
         else:
             train_energy = train_point_energy
             val_energy = val_point_energy
             test_energy = test_point_energy
             gt = test_point_labels
+            threshold_energy = threshold_point_energy
+            threshold_labels = threshold_point_labels
 
-        if threshold_source == 'val':
+        threshold_val_metrics = {}
+        if threshold_source == 'val_mixed_best_f1':
+            threshold, threshold_val_metrics = self._best_f1_threshold(threshold_energy, threshold_labels)
+            if threshold is None:
+                print('Mixed validation threshold is unavailable; falling back to validation percentile.')
+                threshold_source = 'val'
+                threshold = np.percentile(val_energy, threshold_percentile)
+        elif threshold_source == 'val':
             threshold = np.percentile(val_energy, threshold_percentile)
         elif threshold_source == 'train':
             threshold = np.percentile(train_energy, threshold_percentile)
         else:
-            combined_energy = np.concatenate([train_energy, test_energy], axis=0)
+            # Do not use test scores to choose a threshold.  The historical
+            # TSLib "combined" mode mixed train and test energy and therefore
+            # leaked held-out information.  Keep backward compatibility while
+            # using train+validation only.
+            combined_energy = np.concatenate([train_energy, val_energy], axis=0)
             threshold = np.percentile(combined_energy, 100 - self.args.anomaly_ratio)
+            threshold_source = 'train_val'
         print("Threshold :", threshold)
         print("Threshold source: {}, percentile: {}, level: {}".format(
             threshold_source, threshold_percentile, level))
@@ -232,13 +322,40 @@ class Exp_Anomaly_Detection(Exp_Basic):
         print("gt:   ", gt.shape)
 
         accuracy = accuracy_score(gt, pred)
+        balanced_accuracy = balanced_accuracy_score(gt, pred)
         precision, recall, f_score, support = precision_recall_fscore_support(
             gt, pred, average='binary', zero_division=0)
+        _, _, macro_f1, _ = precision_recall_fscore_support(
+            gt, pred, average='macro', zero_division=0)
         tn, fp, fn, tp = confusion_matrix(gt, pred, labels=[0, 1]).ravel()
         true_counts = np.bincount(gt.astype(int), minlength=2)
         pred_counts = np.bincount(pred.astype(int), minlength=2)
+        if np.unique(gt).size >= 2:
+            roc_auc = float(roc_auc_score(gt, test_energy))
+            pr_auc = float(average_precision_score(gt, test_energy))
+        else:
+            roc_auc = float('nan')
+            pr_auc = float('nan')
+        normal_scores = test_energy[gt == 0]
+        fault_scores = test_energy[gt == 1]
+
+        def _stat(values, reducer):
+            return float(reducer(values)) if values.size else float('nan')
+
+        score_stats = {
+            'normal_score_mean': _stat(normal_scores, np.mean),
+            'fault_score_mean': _stat(fault_scores, np.mean),
+            'normal_score_median': _stat(normal_scores, np.median),
+            'fault_score_median': _stat(fault_scores, np.median),
+            'normal_score_p95': _stat(normal_scores, lambda x: np.percentile(x, 95.0)),
+            'fault_score_p95': _stat(fault_scores, lambda x: np.percentile(x, 95.0)),
+        }
         print("Accuracy : {:0.4f}, Precision : {:0.4f}, Recall : {:0.4f}, F-score : {:0.4f} ".format(
             accuracy, precision, recall, f_score))
+        print("Balanced accuracy: {:0.4f}, Macro F1: {:0.4f}, ROC-AUC: {:0.4f}, PR-AUC: {:0.4f}".format(
+            balanced_accuracy, macro_f1, roc_auc, pr_auc))
+        print("Score means normal/fault: {:.8f}/{:.8f}".format(
+            score_stats['normal_score_mean'], score_stats['fault_score_mean']))
         print("true_counts: {}, pred_counts: {}, TN/FP/FN/TP: {}/{}/{}/{}".format(
             true_counts.tolist(), pred_counts.tolist(), int(tn), int(fp), int(fn), int(tp)))
 
@@ -251,23 +368,47 @@ class Exp_Anomaly_Detection(Exp_Basic):
         f.write('\n')
         f.close()
 
-        with open(os.path.join(metric_path, 'anomaly_metrics.csv'), 'w') as f:
-            f.write('setting,accuracy,precision,recall,f1,true_counts,pred_counts,TN,FP,FN,TP,threshold,threshold_source,threshold_percentile,level\n')
-            f.write('{},{:.10f},{:.10f},{:.10f},{:.10f},"{}","{}",{},{},{},{},{:.10f},{},{:.4f},{}\n'.format(
-                setting,
-                float(accuracy),
-                float(precision),
-                float(recall),
-                float(f_score),
-                true_counts.tolist(),
-                pred_counts.tolist(),
-                int(tn),
-                int(fp),
-                int(fn),
-                int(tp),
-                float(threshold),
-                threshold_source,
-                threshold_percentile,
-                level,
-            ))
+        np.savez_compressed(
+            os.path.join(metric_path, 'anomaly_scores.npz'),
+            train_scores=np.asarray(train_energy, dtype=np.float32),
+            val_scores=np.asarray(val_energy, dtype=np.float32),
+            threshold_scores=np.asarray(threshold_energy, dtype=np.float32),
+            threshold_labels=np.asarray(threshold_labels, dtype=np.int8),
+            test_scores=np.asarray(test_energy, dtype=np.float32),
+            test_labels=np.asarray(gt, dtype=np.int8),
+            test_predictions=np.asarray(pred, dtype=np.int8),
+        )
+
+        row = {
+            'setting': setting,
+            'accuracy': float(accuracy),
+            'balanced_accuracy': float(balanced_accuracy),
+            'precision': float(precision),
+            'recall': float(recall),
+            'f1': float(f_score),
+            'macro_f1': float(macro_f1),
+            'roc_auc': roc_auc,
+            'pr_auc': pr_auc,
+            'roc_auc_inverted': 1.0 - roc_auc if np.isfinite(roc_auc) else float('nan'),
+            'true_counts': true_counts.tolist(),
+            'pred_counts': pred_counts.tolist(),
+            'TN': int(tn),
+            'FP': int(fp),
+            'FN': int(fn),
+            'TP': int(tp),
+            'threshold': float(threshold),
+            'threshold_source': threshold_source,
+            'threshold_percentile': threshold_percentile,
+            'level': level,
+            'score_direction': 'higher_is_anomaly',
+            **score_stats,
+            'threshold_val_accuracy': threshold_val_metrics.get('threshold_val_accuracy', float('nan')),
+            'threshold_val_precision': threshold_val_metrics.get('threshold_val_precision', float('nan')),
+            'threshold_val_recall': threshold_val_metrics.get('threshold_val_recall', float('nan')),
+            'threshold_val_f1': threshold_val_metrics.get('threshold_val_f1', float('nan')),
+        }
+        with open(os.path.join(metric_path, 'anomaly_metrics.csv'), 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=list(row))
+            writer.writeheader()
+            writer.writerow(row)
         return

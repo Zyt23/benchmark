@@ -6,8 +6,9 @@ class Model(nn.Module):
     """TranAD-inspired transformer reconstruction wrapper for QAR.
 
     The original TranAD uses a two-phase transformer decoder.  For the shared
-    QAR one-class protocol we expose a compact same-shape reconstruction model
-    so it can be trained and scored by ``Exp_Anomaly_Detection``.
+    QAR one-class protocol we keep the two-phase self-conditioning idea: phase
+    one reconstructs from a zero focus signal, then phase two receives the
+    squared phase-one residual as its focus signal.
     """
 
     def __init__(self, configs):
@@ -23,7 +24,7 @@ class Model(nn.Module):
         d_ff = max(d_model, int(getattr(configs, "d_ff", 128)))
         dropout = float(getattr(configs, "dropout", 0.1))
 
-        self.input_proj = nn.Linear(self.enc_in, d_model)
+        self.input_proj = nn.Linear(2 * self.enc_in, d_model)
         self.pos = nn.Parameter(torch.zeros(1, self.seq_len, d_model))
         layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -36,10 +37,16 @@ class Model(nn.Module):
         self.encoder = nn.TransformerEncoder(layer, num_layers=e_layers)
         self.output_proj = nn.Linear(d_model, self.enc_in)
 
-    def anomaly_detection(self, x_enc):
-        h = self.input_proj(x_enc) + self.pos[:, : x_enc.shape[1]]
+    def _reconstruct(self, x_enc, focus):
+        h = self.input_proj(torch.cat([x_enc, focus], dim=-1)) + self.pos[:, : x_enc.shape[1]]
         h = self.encoder(h)
         return self.output_proj(h)
+
+    def anomaly_detection(self, x_enc):
+        phase1 = self._reconstruct(x_enc, torch.zeros_like(x_enc))
+        focus = (phase1 - x_enc).pow(2)
+        phase2 = self._reconstruct(x_enc, focus)
+        return phase1, phase2
 
     def forward(self, x_enc, x_mark_enc=None, x_dec=None, x_mark_dec=None, mask=None):
         if self.task_name != "anomaly_detection":

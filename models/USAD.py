@@ -7,8 +7,9 @@ class Model(nn.Module):
 
     The PRSOV copy on the server expects ``x_enc + exog_future + endo_future``.
     QAR one-class anomaly detection only passes one compact window ``x_enc`` and
-    scores reconstruction error, so this wrapper reconstructs the whole window
-    and returns a tensor with the same shape as the input.
+    scores reconstruction error, so this wrapper reconstructs the whole window.
+    It returns the three tensors used by the original USAD objective:
+    ``AE1(x)``, ``AE2(x)`` and ``AE2(AE1(x))``.
     """
 
     def __init__(self, configs):
@@ -46,12 +47,15 @@ class Model(nn.Module):
 
     def anomaly_detection(self, x_enc):
         z = self.encoder(x_enc)
-        recon1 = self.decoder1(z)
-        # Keep the second decoder in the graph during training, matching the
-        # spirit of USAD, while returning the primary reconstruction used by the
-        # shared QAR scoring code.
-        _ = self.decoder2(z)
-        return recon1.view(x_enc.shape[0], self.seq_len, self.enc_in)
+        recon1_flat = self.decoder1(z)
+        recon2_flat = self.decoder2(z)
+        recon2ae1_flat = self.decoder2(self.encoder(recon1_flat))
+        shape = (x_enc.shape[0], self.seq_len, self.enc_in)
+        return (
+            recon1_flat.view(*shape),
+            recon2_flat.view(*shape),
+            recon2ae1_flat.view(*shape),
+        )
 
     def forward(self, x_enc, x_mark_enc=None, x_dec=None, x_mark_dec=None, mask=None):
         if self.task_name != "anomaly_detection":
