@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 
-DEFAULT_MODELS = ["Transformer", "TimesNet", "PatchTST", "DLinear", "iTransformer"]
+DEFAULT_MODELS = ["KANAD", "AnomalyTransformer", "TranAD", "USAD", "OmniAnomaly"]
 
 DATASET_NAMES = {
     "dataset5": "320-感压管路故障",
@@ -63,7 +63,13 @@ def read_metric(path: Path) -> dict | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run_tag", required=True)
+    run_group = parser.add_mutually_exclusive_group(required=True)
+    run_group.add_argument("--run_tag")
+    run_group.add_argument(
+        "--run_tags",
+        nargs="+",
+        help="Collect several model-specific run tags into one table.",
+    )
     parser.add_argument("--results_root", default="results")
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--datasets", nargs="*", default=list(DATASET_NAMES))
@@ -77,14 +83,21 @@ def main() -> None:
     tables_dir = output_dir / "tables"
     tables_dir.mkdir(parents=True, exist_ok=True)
 
+    run_tags = args.run_tags or [args.run_tag]
     records: list[dict] = []
     for metric_path in results_root.glob(f"*/{args.metric_file_name}"):
         row = read_metric(metric_path)
         if not row:
             continue
-        parsed = parse_setting(row.get("setting", metric_path.parent.name), args.run_tag, args.models)
-        if parsed is None:
-            parsed = parse_setting(metric_path.parent.name, args.run_tag, args.models)
+        parsed = None
+        matched_run_tag = None
+        for run_tag in run_tags:
+            parsed = parse_setting(row.get("setting", metric_path.parent.name), run_tag, args.models)
+            if parsed is None:
+                parsed = parse_setting(metric_path.parent.name, run_tag, args.models)
+            if parsed is not None:
+                matched_run_tag = run_tag
+                break
         if parsed is None:
             continue
         dataset, model = parsed
@@ -95,6 +108,7 @@ def main() -> None:
                 "dataset": dataset,
                 "fault": DATASET_NAMES.get(dataset, ""),
                 "model": model,
+                "run_tag": matched_run_tag,
                 "accuracy": float(row.get("accuracy", "nan")),
                 "balanced_accuracy": float(row.get("balanced_accuracy", "nan")),
                 "precision": float(row.get("precision", "nan")),
@@ -132,7 +146,7 @@ def main() -> None:
         )
 
     if not records:
-        raise SystemExit(f"No anomaly metrics found for run_tag={args.run_tag!r} under {results_root}")
+        raise SystemExit(f"No anomaly metrics found for run_tags={run_tags!r} under {results_root}")
 
     df = pd.DataFrame(records)
     df["dataset_order"] = df["dataset"].map({d: i for i, d in enumerate(args.datasets)})
@@ -151,7 +165,7 @@ def main() -> None:
         f.write("- 训练：默认只使用正常类 0。\n")
         f.write("- 阈值：来自正常验证集分位数，或来自验证集正常+故障的 best-F1 阈值；不使用测试集选阈值。\n")
         f.write("- 测试：按窗口级别统计 accuracy / precision / recall / f1 / TN / FP / FN / TP。\n\n")
-        f.write(f"- run_tag: `{args.run_tag}`\n")
+        f.write(f"- run_tags: `{', '.join(run_tags)}`\n")
         f.write(f"- all metrics: `{all_csv.name}`\n\n")
         for dataset in args.datasets:
             sub = df[df["dataset"] == dataset]

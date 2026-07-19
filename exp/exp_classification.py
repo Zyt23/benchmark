@@ -20,8 +20,11 @@ class Exp_Classification(Exp_Basic):
     def _build_model(self):
         # model input depends on data
         train_data, train_loader = self._get_data(flag='TRAIN')
-        test_data, test_loader = self._get_data(flag='TEST')
-        self.args.seq_len = max(train_data.max_seq_len, test_data.max_seq_len)
+        vali_data, vali_loader = self._get_data(flag='VAL')
+        # Model construction must not inspect TEST, even for shape metadata.
+        # QAR compact caches use a fixed sequence length, so TRAIN/VAL fully
+        # determine the input shape required at deployment time.
+        self.args.seq_len = max(train_data.max_seq_len, vali_data.max_seq_len)
         self.args.pred_len = 0
         self.args.enc_in = train_data.feature_df.shape[1]
         self.args.num_class = len(train_data.class_names)
@@ -137,7 +140,6 @@ class Exp_Classification(Exp_Basic):
     def train(self, setting):
         train_data, train_loader = self._get_data(flag='TRAIN')
         vali_data, vali_loader = self._get_data(flag='VAL')
-        test_data, test_loader = self._get_data(flag='TEST')
 
         path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(path):
@@ -189,12 +191,10 @@ class Exp_Classification(Exp_Basic):
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
             vali_loss, val_accuracy, val_macro_f1, val_weighted_f1 = self.vali(vali_data, vali_loader, criterion)
-            test_loss, test_accuracy, test_macro_f1, test_weighted_f1 = self.vali(test_data, test_loader, criterion)
 
             print(
-                "Epoch: {0}, Steps: {1} | Train Loss: {2:.3f} Vali Loss: {3:.3f} Vali Acc: {4:.3f} Vali MacroF1: {5:.3f} Vali WeightedF1: {6:.3f} Test Loss: {7:.3f} Test Acc: {8:.3f} Test MacroF1: {9:.3f} Test WeightedF1: {10:.3f}"
-                .format(epoch + 1, train_steps, train_loss, vali_loss, val_accuracy, val_macro_f1, val_weighted_f1,
-                        test_loss, test_accuracy, test_macro_f1, test_weighted_f1))
+                "Epoch: {0}, Steps: {1} | Train Loss: {2:.3f} Vali Loss: {3:.3f} Vali Acc: {4:.3f} Vali MacroF1: {5:.3f} Vali WeightedF1: {6:.3f}"
+                .format(epoch + 1, train_steps, train_loss, vali_loss, val_accuracy, val_macro_f1, val_weighted_f1))
             monitor_values = {
                 'accuracy': val_accuracy,
                 'macro_f1': val_macro_f1,
@@ -211,8 +211,8 @@ class Exp_Classification(Exp_Basic):
             # by EarlyStopping above; large multi-dataset sweeps can disable
             # these to avoid filling the server disk.
             if int(getattr(self.args, 'save_epoch_checkpoints', 1)):
-                epoch_ckpt = os.path.join(path, 'checkpoint_epoch{:03d}_valacc{:.4f}_valmacro{:.4f}_testacc{:.4f}.pth'.format(
-                    epoch + 1, val_accuracy, val_macro_f1, test_accuracy))
+                epoch_ckpt = os.path.join(path, 'checkpoint_epoch{:03d}_valacc{:.4f}_valmacro{:.4f}.pth'.format(
+                    epoch + 1, val_accuracy, val_macro_f1))
                 torch.save(self.model.state_dict(), epoch_ckpt)
                 print("Saved per-epoch checkpoint: {}".format(epoch_ckpt))
             if early_stopping.early_stop:
