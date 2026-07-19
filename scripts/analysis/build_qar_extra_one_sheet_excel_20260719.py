@@ -59,12 +59,27 @@ MODEL_ORDER = [
     "OmniAnomaly",
 ]
 
+FULL_SHOT_MODELS = [
+    "OLinear", "xPatch", "TimeMixer++", "DUET", "TimeMixer", "TimeXer",
+    "iTransformer", "DLinear", "PatchTST", "TimesNet", "Autoformer",
+    "Transformer",
+]
+
+UNAVAILABLE_MODELS = {
+    "TimeMixer++": "UNAVAILABLE\n官方仓库尚未发布 TimeMixer++ 实现",
+}
+
 AUGMENT_SUFFIXES = [
     "_aug0_2000", "_aug0_4000", "_aug0_6000", "_aug0_10000",
     "_aug0_19119", "_aug0_20000", "_aug0_1000", "_normal_keep25",
     "_normal_keep50", "_both_keep25", "_both_keep50", "_normalx2",
     "_normalx4",
 ]
+
+MOJIBAKE_MARKERS = (
+    "锟斤拷", "鎰熷帇", "鏁呴殰", "棰勬祴", "鍒嗙被", "绫诲埆",
+    "妫€娴", "璁粌", "楠岃瘉", "娴嬭瘯", "鏁版嵁闆",
+)
 
 
 def read_csv(path: Path) -> pd.DataFrame:
@@ -211,6 +226,7 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
     anomaly = normalize(read_csv(input_dir / "all_anomaly_metrics.csv"))
     split_audit = read_csv(input_dir / "split_audit.csv")
     shortcut_audit = read_csv(input_dir / "shortcut_audit_summary.csv")
+    augmentation_manifest = read_csv(input_dir / "dataset12_augmentation_manifest.csv")
 
     wb = Workbook()
     ws = wb.active
@@ -261,7 +277,8 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
 
     def write_block(title: str, frame: pd.DataFrame,
                     builder: Callable[[pd.Series | None], str],
-                    group_col: str | None = None) -> None:
+                    group_col: str | None = None,
+                    expected_models: list[str] | None = None) -> None:
         nonlocal row
         put(row, 1, title, fill=title_fill, font=title_font)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=len(DATASETS) + 1)
@@ -287,12 +304,14 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
             for column, dataset in enumerate(DATASETS, 2):
                 put(row, column, dataset, fill=header_fill, font=bold_font)
             row += 1
-            models = model_order(block["model"].dropna().astype(str).unique().tolist())
+            present_models = block["model"].dropna().astype(str).unique().tolist()
+            models = model_order(list(set(present_models) | set(expected_models or [])))
             for model in models:
                 put(row, 1, model, font=bold_font)
                 for column, dataset in enumerate(DATASETS, 2):
                     subset = block[(block["dataset_base"] == dataset) & (block["model"].astype(str) == model)]
-                    text = builder(latest(subset))
+                    selected = latest(subset)
+                    text = UNAVAILABLE_MODELS.get(model, "") if selected is None else builder(selected)
                     put(row, column, text, fill=warn_fill if text == "FAILED" else None)
                 ws.row_dimensions[row].height = 78
                 row += 1
@@ -302,7 +321,30 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
     aug_cls = classification[classification["variant_key"] != "base"] if not classification.empty else classification
     write_block("故障分类", base_cls, classification_cell)
     write_block("dataset12 追加正常样本分类", aug_cls, classification_cell, "variant_key")
-    write_block("预测性维护（全监督）", forecast, forecast_cell, "anchor_key")
+    if not augmentation_manifest.empty:
+        put(row, 1, "dataset12 追加正常样本清单", fill=title_fill, font=title_font)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=len(DATASETS) + 1)
+        row += 1
+        put(row, 1, "variant", fill=header_fill, font=bold_font)
+        for column, dataset in enumerate(DATASETS, 2):
+            put(row, column, dataset, fill=header_fill, font=bold_font)
+        row += 1
+        for _, manifest_row in augmentation_manifest.sort_values("requested_added_normal").iterrows():
+            put(row, 1, str(manifest_row.get("variant", "")), font=bold_font)
+            text = (
+                f"请求追加={fmt(manifest_row.get('requested_added_normal'))}\n"
+                f"有效追加={fmt(manifest_row.get('effective_added_normal'))}  "
+                f"未转换={fmt(manifest_row.get('rejected_or_missing'))}\n"
+                f"总样本={fmt(manifest_row.get('total_samples'))}  "
+                f"class0={fmt(manifest_row.get('class0_count'))}  "
+                f"class1={fmt(manifest_row.get('class1_count'))}\n"
+                f"源文件去重数={fmt(manifest_row.get('unique_sources'))}"
+            )
+            put(row, DATASETS.index("dataset12") + 2, text)
+            ws.row_dimensions[row].height = 70
+            row += 1
+        row += 2
+    write_block("预测性维护（全监督）", forecast, forecast_cell, "anchor_key", FULL_SHOT_MODELS)
     write_block("预测性维护（零样本时序大模型）", zero_shot, forecast_cell, "anchor_key")
     write_block("时序异常检测（纯单类 P95）", anomaly, anomaly_cell)
 
@@ -376,8 +418,14 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
     for sheet in check.worksheets:
         for values in sheet.iter_rows(values_only=True):
             for value in values:
-                if isinstance(value, str) and ("�" in value or re.fullmatch(r"\?{2,}", value.strip())):
-                    bad.append(value)
+                if isinstance(value, str):
+                    stripped = value.strip()
+                    if (
+                        "�" in value
+                        or re.fullmatch(r"\?{2,}", stripped)
+                        or any(marker in value for marker in MOJIBAKE_MARKERS)
+                    ):
+                        bad.append(value)
     check.close()
     if bad:
         raise RuntimeError(f"workbook contains mojibake markers: {bad[:5]}")

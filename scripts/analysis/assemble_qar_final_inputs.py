@@ -84,6 +84,7 @@ def main() -> None:
     parser.add_argument("--anomaly", nargs="*", type=Path, default=[])
     parser.add_argument("--split-audit", type=Path)
     parser.add_argument("--shortcut-audit", type=Path)
+    parser.add_argument("--augmentation-manifest", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
 
@@ -106,6 +107,10 @@ def main() -> None:
         if not args.shortcut_audit.is_file():
             raise FileNotFoundError(args.shortcut_audit)
         shutil.copy2(args.shortcut_audit, args.output_dir / "shortcut_audit_summary.csv")
+    if args.augmentation_manifest:
+        if not args.augmentation_manifest.is_file():
+            raise FileNotFoundError(args.augmentation_manifest)
+        shutil.copy2(args.augmentation_manifest, args.output_dir / "dataset12_augmentation_manifest.csv")
 
 
 if __name__ == "__main__":
