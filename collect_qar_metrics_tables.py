@@ -57,8 +57,11 @@ def read_summary_rows(root, run_tags):
 
 
 def grab_metric(text, pattern, default=''):
-    match = re.search(pattern, text, re.MULTILINE)
-    return match.group(1).strip() if match else default
+    # result_classification.txt is append-only.  A resumed/final evaluation may
+    # therefore follow an older TEST record in the same setting directory.
+    # Always collect the most recent complete metric rather than the stale one.
+    matches = re.findall(pattern, text, re.MULTILINE)
+    return matches[-1].strip() if matches else default
 
 
 def support_by_class(text):
