@@ -229,7 +229,7 @@ def format_metric(value):
     return '{:.6f}'.format(number)
 
 
-def copy_artifacts(root, output_dir, metrics):
+def copy_artifacts(root, output_dir, metrics, copy_code_snapshot=False):
     for row in metrics:
         log_file = root / row['log_file']
         if log_file.exists():
@@ -242,6 +242,9 @@ def copy_artifacts(root, output_dir, metrics):
             dst = output_dir / 'results' / row['dataset'] / row['model'] / 'result_classification.txt'
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(result_file, dst)
+
+    if not copy_code_snapshot:
+        return
 
     code_files = [
         '.gitattributes', '.gitignore', 'prepare_qar_compact.py',
@@ -337,6 +340,8 @@ def main():
     parser.add_argument('--output_dir', required=True)
     parser.add_argument('--remote_project', default='')
     parser.add_argument('--compact_root', default='datasetall_compact')
+    parser.add_argument('--copy_code_snapshot', action='store_true',
+                        help='Opt in to copying a code/ snapshot into the result artifact.')
     parser.add_argument('--force', action='store_true')
     args = parser.parse_args()
 
@@ -374,7 +379,7 @@ def main():
 
     cache_rows = build_cache_manifest(root, {row['dataset'] for row in metrics}, compact_root=args.compact_root)
     write_csv(output_dir / 'cache_manifest.csv', cache_rows, list(cache_rows[0].keys()))
-    copy_artifacts(root, output_dir, metrics)
+    copy_artifacts(root, output_dir, metrics, copy_code_snapshot=args.copy_code_snapshot)
     write_readme(output_dir, metrics, cache_rows, args.run_tags, args.remote_project, compact_root=args.compact_root)
 
     print(output_dir)

@@ -38,6 +38,8 @@ def parse_args():
     parser.add_argument("--pred_len", type=int, default=20)
     parser.add_argument("--copy_result_arrays", action="store_true",
                         help="Copy full result directories including pred.npy/true.npy. Default copies metrics.npy only.")
+    parser.add_argument("--copy_code_snapshot", action="store_true",
+                        help="Opt in to copying a code/ snapshot into the result artifact.")
     return parser.parse_args()
 
 
@@ -239,7 +241,8 @@ def main():
     for dataset, g in all_df.groupby("dataset"):
         g.to_csv(output_dir / "tables" / f"{dataset}_forecast_metrics.csv", index=False)
 
-    copy_code_snapshot(output_dir)
+    if args.copy_code_snapshot:
+        copy_code_snapshot(output_dir)
     write_readme(output_dir, all_df, args)
 
 
