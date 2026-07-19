@@ -27,6 +27,7 @@ E_LAYERS="${E_LAYERS:-2}"
 N_HEADS="${N_HEADS:-4}"
 THRESHOLD_PERCENTILE="${THRESHOLD_PERCENTILE:-99.0}"
 THRESHOLD_SOURCE="${THRESHOLD_SOURCE:-val_mixed_best_f1}"
+SCORE_DIRECTION="${SCORE_DIRECTION:-auto}"
 NUM_WORKERS="${NUM_WORKERS:-0}"
 CUDA_DEVICE="${CUDA_DEVICE:-${GPU:-0}}"
 LOCAL_GPU="${LOCAL_GPU:-0}"
@@ -92,6 +93,7 @@ PY
       --des oneclass_val_threshold \
       --anomaly_threshold_source "${THRESHOLD_SOURCE}" \
       --anomaly_threshold_percentile "${THRESHOLD_PERCENTILE}" \
+      --anomaly_score_direction "${SCORE_DIRECTION}" \
       --anomaly_level window \
       > "${log_file}" 2>&1
     status=$?

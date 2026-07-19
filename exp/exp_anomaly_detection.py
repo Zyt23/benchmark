@@ -175,26 +175,28 @@ class Exp_Anomaly_Detection(Exp_Basic):
         return self.model
 
     @staticmethod
-    def _best_f1_threshold(scores, labels):
+    def _best_f1_threshold(scores, labels, directions=(1.0, -1.0)):
         scores = np.asarray(scores, dtype=np.float64).reshape(-1)
         labels = np.asarray(labels, dtype=np.int64).reshape(-1)
         if scores.size == 0 or np.unique(labels).size < 2:
-            return None, {}
+            return None, 1.0, {}
 
         percentiles = np.linspace(0.0, 100.0, 1001)
-        candidates = np.unique(np.percentile(scores, percentiles))
         best = None
-        for threshold in candidates:
-            pred = (scores > threshold).astype(np.int64)
-            precision, recall, f1, _ = precision_recall_fscore_support(
-                labels, pred, average='binary', zero_division=0)
-            accuracy = accuracy_score(labels, pred)
-            current = (float(f1), float(recall), float(precision), float(accuracy), -float(threshold))
-            if best is None or current > best[0]:
-                best = (current, float(threshold))
+        for direction in directions:
+            decision_scores = scores * float(direction)
+            candidates = np.unique(np.percentile(decision_scores, percentiles))
+            for threshold in candidates:
+                pred = (decision_scores > threshold).astype(np.int64)
+                precision, recall, f1, _ = precision_recall_fscore_support(
+                    labels, pred, average='binary', zero_division=0)
+                accuracy = accuracy_score(labels, pred)
+                current = (float(f1), float(recall), float(precision), float(accuracy), -float(threshold))
+                if best is None or current > best[0]:
+                    best = (current, float(threshold), float(direction))
 
-        metrics, threshold = best
-        return threshold, {
+        metrics, threshold, direction = best
+        return threshold, direction, {
             'threshold_val_f1': metrics[0],
             'threshold_val_recall': metrics[1],
             'threshold_val_precision': metrics[2],
@@ -285,29 +287,42 @@ class Exp_Anomaly_Detection(Exp_Basic):
             threshold_labels = threshold_point_labels
 
         threshold_val_metrics = {}
+        requested_direction = str(getattr(self.args, 'anomaly_score_direction', 'auto')).lower()
+        direction_factor = -1.0 if requested_direction == 'low' else 1.0
+        score_direction = 'lower_error_is_anomaly' if direction_factor < 0 else 'higher_error_is_anomaly'
         if threshold_source == 'val_mixed_best_f1':
-            threshold, threshold_val_metrics = self._best_f1_threshold(threshold_energy, threshold_labels)
+            if requested_direction == 'high':
+                candidate_directions = (1.0,)
+            elif requested_direction == 'low':
+                candidate_directions = (-1.0,)
+            else:
+                candidate_directions = (1.0, -1.0)
+            threshold, direction_factor, threshold_val_metrics = self._best_f1_threshold(
+                threshold_energy, threshold_labels, directions=candidate_directions)
             if threshold is None:
                 print('Mixed validation threshold is unavailable; falling back to validation percentile.')
                 threshold_source = 'val'
+                direction_factor = 1.0
                 threshold = np.percentile(val_energy, threshold_percentile)
+            score_direction = 'lower_error_is_anomaly' if direction_factor < 0 else 'higher_error_is_anomaly'
         elif threshold_source == 'val':
-            threshold = np.percentile(val_energy, threshold_percentile)
+            threshold = np.percentile(direction_factor * val_energy, threshold_percentile)
         elif threshold_source == 'train':
-            threshold = np.percentile(train_energy, threshold_percentile)
+            threshold = np.percentile(direction_factor * train_energy, threshold_percentile)
         else:
             # Do not use test scores to choose a threshold.  The historical
             # TSLib "combined" mode mixed train and test energy and therefore
             # leaked held-out information.  Keep backward compatibility while
             # using train+validation only.
             combined_energy = np.concatenate([train_energy, val_energy], axis=0)
-            threshold = np.percentile(combined_energy, 100 - self.args.anomaly_ratio)
+            threshold = np.percentile(direction_factor * combined_energy, 100 - self.args.anomaly_ratio)
             threshold_source = 'train_val'
         print("Threshold :", threshold)
         print("Threshold source: {}, percentile: {}, level: {}".format(
             threshold_source, threshold_percentile, level))
 
-        pred = (test_energy > threshold).astype(int)
+        decision_test_energy = direction_factor * test_energy
+        pred = (decision_test_energy > threshold).astype(int)
         gt = np.array(gt).astype(int)
 
         print("pred:   ", pred.shape)
@@ -331,9 +346,13 @@ class Exp_Anomaly_Detection(Exp_Basic):
         true_counts = np.bincount(gt.astype(int), minlength=2)
         pred_counts = np.bincount(pred.astype(int), minlength=2)
         if np.unique(gt).size >= 2:
-            roc_auc = float(roc_auc_score(gt, test_energy))
-            pr_auc = float(average_precision_score(gt, test_energy))
+            raw_roc_auc = float(roc_auc_score(gt, test_energy))
+            raw_pr_auc = float(average_precision_score(gt, test_energy))
+            roc_auc = float(roc_auc_score(gt, decision_test_energy))
+            pr_auc = float(average_precision_score(gt, decision_test_energy))
         else:
+            raw_roc_auc = float('nan')
+            raw_pr_auc = float('nan')
             roc_auc = float('nan')
             pr_auc = float('nan')
         normal_scores = test_energy[gt == 0]
@@ -354,6 +373,8 @@ class Exp_Anomaly_Detection(Exp_Basic):
             accuracy, precision, recall, f_score))
         print("Balanced accuracy: {:0.4f}, Macro F1: {:0.4f}, ROC-AUC: {:0.4f}, PR-AUC: {:0.4f}".format(
             balanced_accuracy, macro_f1, roc_auc, pr_auc))
+        print("Raw ROC-AUC: {:0.4f}, raw PR-AUC: {:0.4f}, direction: {}".format(
+            raw_roc_auc, raw_pr_auc, score_direction))
         print("Score means normal/fault: {:.8f}/{:.8f}".format(
             score_stats['normal_score_mean'], score_stats['fault_score_mean']))
         print("true_counts: {}, pred_counts: {}, TN/FP/FN/TP: {}/{}/{}/{}".format(
@@ -375,6 +396,7 @@ class Exp_Anomaly_Detection(Exp_Basic):
             threshold_scores=np.asarray(threshold_energy, dtype=np.float32),
             threshold_labels=np.asarray(threshold_labels, dtype=np.int8),
             test_scores=np.asarray(test_energy, dtype=np.float32),
+            test_decision_scores=np.asarray(decision_test_energy, dtype=np.float32),
             test_labels=np.asarray(gt, dtype=np.int8),
             test_predictions=np.asarray(pred, dtype=np.int8),
         )
@@ -389,7 +411,8 @@ class Exp_Anomaly_Detection(Exp_Basic):
             'macro_f1': float(macro_f1),
             'roc_auc': roc_auc,
             'pr_auc': pr_auc,
-            'roc_auc_inverted': 1.0 - roc_auc if np.isfinite(roc_auc) else float('nan'),
+            'raw_roc_auc': raw_roc_auc,
+            'raw_pr_auc': raw_pr_auc,
             'true_counts': true_counts.tolist(),
             'pred_counts': pred_counts.tolist(),
             'TN': int(tn),
@@ -400,7 +423,7 @@ class Exp_Anomaly_Detection(Exp_Basic):
             'threshold_source': threshold_source,
             'threshold_percentile': threshold_percentile,
             'level': level,
-            'score_direction': 'higher_is_anomaly',
+            'score_direction': score_direction,
             **score_stats,
             'threshold_val_accuracy': threshold_val_metrics.get('threshold_val_accuracy', float('nan')),
             'threshold_val_precision': threshold_val_metrics.get('threshold_val_precision', float('nan')),

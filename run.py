@@ -58,6 +58,8 @@ if __name__ == '__main__':
                         help='percentile used when anomaly_threshold_source is train or val')
     parser.add_argument('--anomaly_level', type=str, default='point', choices=['point', 'window'],
                         help='evaluate anomaly detection at point level or compact-window/sample level')
+    parser.add_argument('--anomaly_score_direction', type=str, default='auto', choices=['auto', 'high', 'low'],
+                        help='whether high or low reconstruction error means anomaly; auto selects on validation labels only')
     parser.add_argument('--forecast_anomaly_score', type=str, default='mse', choices=['mse', 'mae'],
                         help='forecast_anomaly_detection: score used for thresholding')
     parser.add_argument('--omni_beta', type=float, default=0.001,
