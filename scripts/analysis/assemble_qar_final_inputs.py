@@ -83,6 +83,7 @@ def main() -> None:
     parser.add_argument("--zero-shot", nargs="*", type=Path, default=[])
     parser.add_argument("--anomaly", nargs="*", type=Path, default=[])
     parser.add_argument("--split-audit", type=Path)
+    parser.add_argument("--shortcut-audit", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
 
@@ -101,6 +102,10 @@ def main() -> None:
         if not args.split_audit.is_file():
             raise FileNotFoundError(args.split_audit)
         shutil.copy2(args.split_audit, args.output_dir / "split_audit.csv")
+    if args.shortcut_audit:
+        if not args.shortcut_audit.is_file():
+            raise FileNotFoundError(args.shortcut_audit)
+        shutil.copy2(args.shortcut_audit, args.output_dir / "shortcut_audit_summary.csv")
 
 
 if __name__ == "__main__":

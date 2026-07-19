@@ -210,6 +210,7 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
     zero_shot = normalize(read_csv(input_dir / "all_zero_shot_metrics.csv"))
     anomaly = normalize(read_csv(input_dir / "all_anomaly_metrics.csv"))
     split_audit = read_csv(input_dir / "split_audit.csv")
+    shortcut_audit = read_csv(input_dir / "shortcut_audit_summary.csv")
 
     wb = Workbook()
     ws = wb.active
@@ -304,6 +305,50 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
     write_block("预测性维护（全监督）", forecast, forecast_cell, "anchor_key")
     write_block("预测性维护（零样本时序大模型）", zero_shot, forecast_cell, "anchor_key")
     write_block("时序异常检测（纯单类 P95）", anomaly, anomaly_cell)
+
+    if not shortcut_audit.empty:
+        put(row, 1, "传感器可分性与元信息捷径审计", fill=title_fill, font=title_font)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=len(DATASETS) + 1)
+        row += 1
+        put(row, 1, "diagnostic", fill=header_fill, font=bold_font)
+        for column, dataset in enumerate(DATASETS, 2):
+            put(row, column, dataset, fill=header_fill, font=bold_font)
+        row += 1
+        for diagnostic in ["signal-only 固定 LR", "metadata-only 固定 LR", "最强单传感器效应量"]:
+            put(row, 1, diagnostic, font=bold_font)
+            for column, dataset in enumerate(DATASETS, 2):
+                subset = shortcut_audit[shortcut_audit["dataset"].astype(str) == dataset]
+                if subset.empty:
+                    text = ""
+                else:
+                    audit = subset.iloc[-1]
+                    if diagnostic.startswith("signal"):
+                        text = (
+                            f"acc={fmt(audit.get('signal_accuracy'))} "
+                            f"macro_f1={fmt(audit.get('signal_macro_f1'))}\n"
+                            f"ROC={fmt(audit.get('signal_roc_auc'))}\n"
+                            f"TN={fmt(audit.get('signal_TN'))} FP={fmt(audit.get('signal_FP'))} "
+                            f"FN={fmt(audit.get('signal_FN'))} TP={fmt(audit.get('signal_TP'))}"
+                        )
+                    elif diagnostic.startswith("metadata"):
+                        text = (
+                            f"acc={fmt(audit.get('metadata_accuracy'))} "
+                            f"macro_f1={fmt(audit.get('metadata_macro_f1'))}\n"
+                            f"ROC={fmt(audit.get('metadata_roc_auc'))}\n"
+                            f"TN={fmt(audit.get('metadata_TN'))} FP={fmt(audit.get('metadata_FP'))} "
+                            f"FN={fmt(audit.get('metadata_FN'))} TP={fmt(audit.get('metadata_TP'))}"
+                        )
+                    else:
+                        text = (
+                            f"{audit.get('top_sensor', '')}\n"
+                            f"|d| train={fmt(audit.get('top_sensor_train_abs_d'))} "
+                            f"test={fmt(audit.get('top_sensor_test_abs_d'))}\n"
+                            f"方向一致={audit.get('top_sensor_direction_consistent', '')}"
+                        )
+                put(row, column, text)
+            ws.row_dimensions[row].height = 70
+            row += 1
+        row += 2
 
     if not split_audit.empty:
         put(row, 1, "数据划分审计", fill=title_fill, font=title_font)
