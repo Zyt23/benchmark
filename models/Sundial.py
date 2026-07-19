@@ -47,6 +47,16 @@ def _patch_sundial_generation_for_modern_transformers(model):
         streamer,
         **model_kwargs,
     ):
+        # Transformers 4.49 eagerly supplies an empty DynamicCache.  Sundial's
+        # 4.40 decoder checks only whether the object is None and therefore
+        # mistakes this empty cache for a completed first decoding step.
+        past_key_values = model_kwargs.get("past_key_values")
+        if past_key_values is not None:
+            try:
+                if past_key_values.get_seq_length() == 0:
+                    model_kwargs["past_key_values"] = None
+            except (AttributeError, TypeError):
+                pass
         return sundial_greedy_search(
             input_ids=input_ids,
             logits_processor=logits_processor,
