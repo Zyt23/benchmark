@@ -283,7 +283,7 @@ class Exp_Forecast_Anomaly_Detection(Exp_Basic):
         if test:
             print('loading model')
             self.model.load_state_dict(torch.load(
-                os.path.join('./checkpoints/' + setting, 'checkpoint.pth'),
+                os.path.join(self.args.checkpoints, setting, 'checkpoint.pth'),
                 map_location=self.device,
             ))
 

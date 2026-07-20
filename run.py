@@ -1,6 +1,7 @@
 import argparse
 import os
 import torch
+import hashlib
 import torch.backends
 from utils.print_args import print_args
 import random
@@ -261,6 +262,13 @@ if __name__ == '__main__':
                 args.embed,
                 args.distil,
                 args.des, ii)
+
+            # The generic TSLib setting can exceed Linux's 255-byte component
+            # limit for forecast-head anomaly jobs.  Keep the dataset/model
+            # readable and use a stable digest for the remaining arguments.
+            if args.task_name == 'forecast_anomaly_detection':
+                setting_digest = hashlib.sha1(setting.encode('utf-8')).hexdigest()[:12]
+                setting = f'forecast_anomaly_{args.model_id}_{args.model}_{ii}_{setting_digest}'
             
             # Override setting for specific model to ensure proper checkpoint naming and logging
             if args.model == 'MambaSingleLayer' and args.task_name == 'classification':
@@ -302,6 +310,10 @@ if __name__ == '__main__':
             args.embed,
             args.distil,
             args.des, ii)
+
+        if args.task_name == 'forecast_anomaly_detection':
+            setting_digest = hashlib.sha1(setting.encode('utf-8')).hexdigest()[:12]
+            setting = f'forecast_anomaly_{args.model_id}_{args.model}_{ii}_{setting_digest}'
         
         # Override setting for specific model to ensure proper checkpoint naming and logging
         if args.model == 'MambaSingleLayer' and args.task_name == 'classification':
