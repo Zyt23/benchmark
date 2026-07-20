@@ -111,7 +111,9 @@ PY
       --forecast_anomaly_score "${FORECAST_ANOMALY_SCORE}" \
       > "${log_file}" 2>&1
     status=$?
-    result_dir="$(find -L ./results -maxdepth 1 -type d -name "*${des}_0" -print -quit 2>/dev/null || true)"
+    result_dir="$(find -L ./results -maxdepth 1 -type d \
+      -name "forecast_anomaly_${model_id}_${model}_0_*" -print 2>/dev/null \
+      | sort | tail -n 1 || true)"
     printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "${dataset}" "${model}" "${status}" "${enc_in}" "${root_path}" "${log_file}" "${result_dir}" >> "${SUMMARY_FILE}"
   done
 done
