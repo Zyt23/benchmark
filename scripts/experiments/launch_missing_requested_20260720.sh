@@ -49,6 +49,7 @@ run_normal_aug_patchtst_repair() {
 
 run_patch_sweep() {
   env PATCH_VALUES="8 4 2 1" GPU_LIST="${GPU_LIST}" MAX_PARALLEL="${MAX_PARALLEL}" \
+    TSLIB_USE_SDPA="${TSLIB_USE_SDPA:-1}" \
     LOG_ROOT="${ARTIFACT_ROOT}/server_logs/patchlen_missing_20260720" \
     RUN_SUFFIX=20260720_missing \
     bash scripts/experiments/launch_patchlen_sweep_20260717.sh
@@ -56,6 +57,7 @@ run_patch_sweep() {
   # The old patch=16 classification run missed dataset14.  This also refreshes
   # its eight forecast cells, which is harmless and makes this shard complete.
   env DATASETS=dataset14 PATCH_VALUES=16 GPU_LIST="${GPU_LIST}" MAX_PARALLEL="${MAX_PARALLEL}" \
+    TSLIB_USE_SDPA="${TSLIB_USE_SDPA:-1}" \
     LOG_ROOT="${ARTIFACT_ROOT}/server_logs/patchlen16_dataset14_20260720" \
     RUN_SUFFIX=20260720_dataset14 \
     bash scripts/experiments/launch_patchlen_sweep_20260717.sh

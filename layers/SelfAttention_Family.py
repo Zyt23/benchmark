@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
+import os
 from math import sqrt
 from utils.masking import TriangularCausalMask, ProbMask
 try:
@@ -55,11 +57,33 @@ class FullAttention(nn.Module):
         self.mask_flag = mask_flag
         self.output_attention = output_attention
         self.dropout = nn.Dropout(attention_dropout)
+        self.use_sdpa = os.environ.get('TSLIB_USE_SDPA', '0').lower() in {
+            '1', 'true', 'yes', 'on'
+        }
 
     def forward(self, queries, keys, values, attn_mask, tau=None, delta=None):
         B, L, H, E = queries.shape
         _, S, _, D = values.shape
         scale = self.scale or 1. / sqrt(E)
+
+        # Patch-length ablations can create thousands of tokens.  SDPA computes
+        # the same scaled dot-product attention without materializing the full
+        # BxHxLxS matrix.  Keep it opt-in so historical benchmark runs are not
+        # silently changed, and retain the explicit path when attention maps are
+        # requested.
+        if self.use_sdpa and not self.output_attention and attn_mask is None:
+            q = queries.permute(0, 2, 1, 3)
+            k = keys.permute(0, 2, 1, 3)
+            v = values.permute(0, 2, 1, 3)
+            output = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                dropout_p=self.dropout.p if self.training else 0.0,
+                is_causal=self.mask_flag,
+                scale=scale,
+            )
+            return output.permute(0, 2, 1, 3).contiguous(), None
 
         scores = torch.einsum("blhe,bshe->bhls", queries, keys)
 
