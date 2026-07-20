@@ -80,7 +80,12 @@ def main() -> None:
         cls[cls["experiment_group"].astype(str).str.contains("normal_aug")])
     normal_aug_cls = dedupe(normal_aug_cls, ["variant", "dataset", "model"])
 
-    patch_cls = cls[cls["experiment_group"].astype(str).str.contains("patchlen")].copy()
+    # The first PatchTST sweep predated the constructor fix that made
+    # ``configs.patch_len`` effective. Keep only the corrected, uniformly
+    # lightweight classification ablation.
+    patch_cls = cls[
+        cls["run_tag"].astype(str).str.contains("20260720_paramfix_lite")
+    ].copy()
     patch_cls["variant"] = "patchlen"
     patch_cls = dedupe(patch_cls, ["patch_len", "dataset", "model"])
 
@@ -94,7 +99,18 @@ def main() -> None:
     normal_aug_fc = dedupe(
         normal_aug_fc, ["variant", "anchor", "dataset", "model"])
 
-    patch_fc = fc[fc["experiment_group"].astype(str).str.contains("patchlen")].copy()
+    # TimeXer honored patch_len from the start, while PatchTST needs the
+    # corrected 20260720 parameter-fix rerun.
+    patch_fc = fc[
+        (
+            fc["model"].astype(str).eq("PatchTST")
+            & fc["run_tag"].astype(str).str.contains("20260720_paramfix")
+        )
+        | (
+            fc["model"].astype(str).eq("TimeXer")
+            & fc["experiment_group"].astype(str).str.contains("patchlen")
+        )
+    ].copy()
     patch_fc["variant"] = "patchlen"
     patch_fc = dedupe(patch_fc, ["patch_len", "anchor", "dataset", "model"])
 
@@ -209,7 +225,8 @@ def main() -> None:
         ("预测：正常样本扩增 x2/x4", 240, len(normal_aug_fc), "complete"),
         ("预测：PatchTST/TimeXer patch=16/8/4/2/1", 440, len(patch_fc), "complete"),
         ("大模型上下文：Chronos-2/Toto-2.0/Moirai", 132, len(context), "complete"),
-        ("大模型上下文：TiRex-2", 44, 0, "gated weights + server egress unavailable"),
+        ("大模型上下文：TiRex-2", 44, 0,
+         "gated weights: account not authorized (HF mirror reachable)"),
         ("单变量 Sundial", 44, len(univariate), "complete"),
         ("预测头异常检测", 220, len(forecast_anomaly), "complete"),
     ], columns=["experiment", "expected_rows", "success_rows", "status"])
