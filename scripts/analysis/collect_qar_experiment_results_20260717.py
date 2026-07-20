@@ -201,6 +201,15 @@ def collect(root: Path, expected: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
         expected_datasets = [x for x in str(exp.get("datasets", "")).split() if x]
         summary_dir = summary_dir_for_task(root, task, run_tag)
         summary_rows = read_tsv(summary_dir / "summary.tsv")
+        # Launchers append to summary.tsv so an interrupted/retried shard can
+        # contain the same dataset/model more than once.  The last row is the
+        # authoritative retry result and each requested cell must appear once
+        # in the final workbook.
+        latest_summary_rows: dict[tuple[str, str], dict[str, str]] = {}
+        for summary_row in summary_rows:
+            key = (summary_row.get("dataset", ""), summary_row.get("model", ""))
+            latest_summary_rows[key] = summary_row
+        summary_rows = list(latest_summary_rows.values())
         seen = {(row.get("dataset", ""), row.get("model", "")) for row in summary_rows}
         success = 0
         failed = 0
