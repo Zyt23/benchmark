@@ -69,7 +69,7 @@ ZERO_SHOT_MODELS = ["TiRex-2", "TiRex", "Chronos2", "Toto", "Moirai", "Sundial"]
 
 UNAVAILABLE_MODELS = {
     "TimeMixer++": "UNAVAILABLE\n官方仓库尚未发布 TimeMixer++ 实现",
-    "TiRex-2": "GATED_WEIGHT\n官方权重需 Hugging Face 授权；当前环境无访问令牌",
+    "TiRex-2": "GATED_WEIGHT\n需接受 Hugging Face 条款并使用独立 torch>=2.8 环境",
 }
 
 AUGMENT_SUFFIXES = [

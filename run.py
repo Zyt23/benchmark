@@ -60,8 +60,16 @@ if __name__ == '__main__':
                         help='evaluate anomaly detection at point level or compact-window/sample level')
     parser.add_argument('--anomaly_score_direction', type=str, default='auto', choices=['auto', 'high', 'low'],
                         help='whether high or low reconstruction error means anomaly; auto selects on validation labels only')
-    parser.add_argument('--forecast_anomaly_score', type=str, default='mse', choices=['mse', 'mae'],
-                        help='forecast_anomaly_detection: score used for thresholding')
+    parser.add_argument(
+        '--forecast_anomaly_score',
+        type=str,
+        default='auto',
+        choices=['auto', 'mse', 'mae', 'channel_mse_max', 'time_mse_max'],
+        help=(
+            'forecast_anomaly_detection: error score used for thresholding; '
+            'auto selects the score and threshold using validation data only'
+        ),
+    )
     parser.add_argument('--omni_beta', type=float, default=0.001,
                         help='KL-divergence weight for the QAR OmniAnomaly adapter')
 

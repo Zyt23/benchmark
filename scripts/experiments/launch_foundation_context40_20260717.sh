@@ -3,12 +3,13 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 PYTHON="${PYTHON:-/home/para/anaconda3/bin/python}"
+ZERO_SHOT_PYTHON="${ZERO_SHOT_PYTHON:-${PYTHON}}"
 
 DATASETS="${DATASETS:-dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14}"
 SOURCE_ROOT="${SOURCE_ROOT:-datasetall_tsfile_compact_custom_forecast_chrono_20260711}"
 CONTEXT_ROOT="${CONTEXT_ROOT:-datasetall_tsfile_compact_context40_predict23_20260717}"
 HISTORY_COUNTS="${HISTORY_COUNTS:-2 3 5 8}"
-MODELS="${MODELS:-Chronos2 Toto Moirai TiRex}"
+MODELS="${MODELS:-Chronos2 Toto Moirai TiRex2}"
 GPU_LIST="${GPU_LIST:-0 1 2 3 4}"
 MAX_PARALLEL="${MAX_PARALLEL:-2}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-experiment_artifacts/QAR_extra_experiments_20260717}"
@@ -42,7 +43,7 @@ wait_for_slot() {
 
 batch_for_model() {
   case "$1" in
-    TiRex) echo "${TIREX_BATCH_SIZE:-1}" ;;
+    TiRex|TiRex2) echo "${TIREX_BATCH_SIZE:-1}" ;;
     Moirai) echo "${MOIRAI_BATCH_SIZE:-4}" ;;
     Toto) echo "${TOTO_BATCH_SIZE:-4}" ;;
     *) echo "${ZERO_BATCH_SIZE:-8}" ;;
@@ -71,9 +72,10 @@ for hist in ${HISTORY_COUNTS}; do
     echo "[launch] zero-shot model=${model} hist=${hist} seq_len=${seq_len} gpu=${gpu}"
     (
       env \
-        DATASETS="${DATASETS}" \
-        MODELS="${model}" \
-        COMPACT_ROOT="${root}" \
+      DATASETS="${DATASETS}" \
+      MODELS="${model}" \
+      PYTHON_BIN="${ZERO_SHOT_PYTHON}" \
+      COMPACT_ROOT="${root}" \
         RUN_TAG="${run_tag}" \
         CUDA_DEVICES="${gpu}" \
         SEQ_LEN="${seq_len}" \

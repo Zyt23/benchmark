@@ -19,10 +19,25 @@ LOG_ROOT="${LOG_ROOT:-${ARTIFACT_ROOT}/server_logs/normal_aug}"
 
 LEAP_EXTRA_ZIP="${LEAP_EXTRA_ZIP:-datasetall/data12-0类追加csv数据(1).zip}"
 A320_EXTRA_ZIP="${A320_EXTRA_ZIP:-datasetall/320-HPV-正常-追加567.zip}"
+V2527_EXTRA_ZIP="${V2527_EXTRA_ZIP:-datasetall/320-V2527-HPV-正常-追加.zip}"
+SOV_EXTRA_ZIP="${SOV_EXTRA_ZIP:-datasetall/SOV_normal_5600_hdf5.zip}"
 RUN_SUFFIX="${RUN_SUFFIX:-20260717}"
 
 cd "${PROJECT_ROOT}"
 mkdir -p "${LOG_ROOT}"
+
+if [ ! -f "${LEAP_EXTRA_ZIP}" ]; then
+  LEAP_EXTRA_ZIP="$(find datasetall -maxdepth 1 -name 'data12-0*csv*.zip' -print -quit 2>/dev/null || true)"
+fi
+if [ ! -f "${A320_EXTRA_ZIP}" ]; then
+  A320_EXTRA_ZIP="$(find datasetall -maxdepth 1 -name '320-HPV-*567.zip' -print -quit 2>/dev/null || true)"
+fi
+if [ ! -f "${V2527_EXTRA_ZIP}" ]; then
+  V2527_EXTRA_ZIP="$(find datasetall -maxdepth 1 -name '320-V2527-HPV-*.zip' -print -quit 2>/dev/null || true)"
+fi
+if [ ! -f "${SOV_EXTRA_ZIP}" ]; then
+  SOV_EXTRA_ZIP="$(find datasetall -maxdepth 1 -name 'SOV_normal_5600_hdf5.zip' -print -quit 2>/dev/null || true)"
+fi
 
 specs=()
 aug_datasets=()
@@ -41,6 +56,22 @@ if [ -f "${A320_EXTRA_ZIP}" ]; then
   done
 else
   echo "[warn] missing A320 extra zip: ${A320_EXTRA_ZIP}"
+fi
+if [ -f "${V2527_EXTRA_ZIP}" ]; then
+  specs+=("${V2527_EXTRA_ZIP}=dataset8,dataset8-1")
+  for dataset in dataset8 dataset8-1; do
+    aug_datasets+=("${dataset}_normalx2" "${dataset}_normalx4")
+  done
+else
+  echo "[warn] missing V2527 extra zip: ${V2527_EXTRA_ZIP}"
+fi
+if [ -f "${SOV_EXTRA_ZIP}" ]; then
+  specs+=("${SOV_EXTRA_ZIP}=dataset14")
+  for dataset in dataset14; do
+    aug_datasets+=("${dataset}_normalx2" "${dataset}_normalx4")
+  done
+else
+  echo "[warn] missing SOV extra zip: ${SOV_EXTRA_ZIP}"
 fi
 
 if [ "${#specs[@]}" -eq 0 ]; then

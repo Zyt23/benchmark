@@ -1,132 +1,97 @@
-# QAR experiment manifest 20260717
+# QAR 扩展实验清单（2026-07-20 核对版）
 
-This manifest records the experiment matrix requested on 2026-07-17.  It is
-kept in git so the benchmark can be relaunched without relying on an
-`experiment_artifacts` code snapshot.
+本文件记录数据缩放、patch 消融、时序基础模型、单变量预测和预测误差异常检测实验。代码保存在仓库根目录，运行结果可以放在 `experiment_artifacts`。
 
-## Shared datasets
+## 共用数据与切分
 
-Base datasets:
+数据集为：
 
 `dataset5 dataset6 dataset7 dataset8 dataset8-1 dataset9 dataset10 dataset11 dataset12 dataset13 dataset14`
 
-Fault descriptions:
+- 分类 compact：`datasetall_tsfile_compact_custom_cls_chrono_20260711`。
+- 预测 compact：`datasetall_tsfile_compact_custom_forecast_chrono_20260711`。
+- 分类使用新的多锚点工况逻辑，并删除缺失较多的 6→8 工况。
+- dataset13 使用 `datasetall_tsfile/build_dataset15_1.py` 对应的字段与锚点。
+- 按正常/故障类别分别进行时间顺序 7:1:2 切分；TRAIN、VAL、TEST 源航班不重叠，且 TEST 保留故障样本。
 
-- dataset5: 320-感压管路故障
-- dataset6: 320-HPV活门故障
-- dataset7: 320-PRV活门故障
-- dataset8: 320-管道漏气
-- dataset8-1: 320-PRV活门漏气
-- dataset9: 321-HPV故障（LEAP）
-- dataset10: 321-感压管路故障（LEAP）
-- dataset11: 321-管道漏气
-- dataset12: 321-PRV故障（LEAP）
-- dataset13: 787机型空气压缩机故障
-- dataset14: 777机型PRSOV故障
+## 预测切片的准确含义
 
-## Base split and condition logic
+四个工况分别建集：`2→3`、`4→5`、`5→6`、`8→9`。
 
-- Classification compact root: `datasetall_tsfile_compact_custom_cls_chrono_20260711`.
-- Forecast compact root: `datasetall_tsfile_compact_custom_forecast_chrono_20260711`.
-- Classification uses the custom multi-anchor condition logic.  For dataset5~12
-  and dataset14, the 6→8 cruise→approach anchor is excluded because many
-  flights do not contain that transition.  dataset13 uses
-  `datasetall_tsfile/build_dataset15_1.py`-style variables and anchors.
-- Forecast uses four independent phase-transition datasets:
-  `predict_2_3`, `predict_4_5`, `predict_5_6`, `predict_8_9`.
-  Each segment has 80 points: 30 before and 50 after the transition.
-- The compact loader splits by `time_keys`/`sources`: train 70%, validation 10%,
-  test 20%, with train earlier than validation and validation earlier than test.
-  For `per_class_chrono`, the chronological split is done separately inside
-  each class.
+每个样本共 80 点：
 
-## Experiment blocks
+- 转换前 30 点；
+- 转换后 50 点；
+- 模型输入前 60 点，即“转换前 30 + 转换后前 30”；
+- 模型预测最后 20 点，即“转换后第 31～50 点”。
 
-### A. Data scale down
+因此，`seq_len=60, pred_len=20` 没有丢掉后 20 点；此前“前30+后30”的说法只是对完整切片描述不准确。
 
-Launcher: `scripts/experiments/launch_data_scale_experiments_20260717.sh`
+## A. 数据量缩减
 
-Classification:
+启动器：`scripts/experiments/launch_data_scale_experiments_20260717.sh`
 
-- Both normal and fault kept at 50%: `both_keep50`
-- Both normal and fault kept at 25%: `both_keep25`
-- Normal kept at 50%, fault unchanged: `normal_keep50`
-- Normal kept at 25%, fault unchanged: `normal_keep25`
+分类：
 
-Forecast:
+- `both_keep50`：正常和故障均保留 50%；
+- `both_keep25`：正常和故障均保留 25%；
+- `normal_keep50`：正常保留 50%，故障不变；
+- `normal_keep25`：正常保留 25%，故障不变。
 
-- Both normal and fault kept at 50%: `both_keep50`
-- Both normal and fault kept at 25%: `both_keep25`
-- All four forecast anchors are run.
+预测只运行 `both_keep50` 和 `both_keep25`，覆盖四个工况。模型为 Transformer、TimesNet、PatchTST、DLinear、iTransformer。
 
-Models: `Transformer TimesNet PatchTST DLinear iTransformer`.
+## B. 正常样本扩增到 200%/400%
 
-### B. Normal data scale up
+启动器：`scripts/experiments/launch_normal_aug_experiments_20260717.sh`
 
-Launcher: `scripts/experiments/launch_normal_aug_experiments_20260717.sh`
+- dataset5/6/7 使用 `datasetall/320-HPV-正常-追加567.zip`；
+- dataset9/10/12 使用 `datasetall/data12-0类追加csv数据(1).zip`；
+- 故障样本保持不变；
+- 其他数据集暂留空，直到有对应机型的正常追加包。
 
-Normal class is expanded to 200% and 400%; fault samples stay unchanged.
+分类和四工况预测均运行五个模型。PatchTST 分类失败单元由 `scripts/experiments/launch_missing_requested_20260720.sh` 低 batch 修复。
 
-Available extra-normal packages:
+## C. Patch 长度消融
 
-- `data12-0类追加csv数据(1).zip` applies to dataset9/dataset10/dataset12.
-- `320-HPV-正常-追加567.zip` applies to dataset5/dataset6/dataset7.
+启动器：`scripts/experiments/launch_patchlen_sweep_20260717.sh`
 
-Other datasets are intentionally blank/NA until corresponding normal packages
-are available.
+patch 长度依次为 `16 8 4 2 1`。
 
-Tasks: classification and four-anchor forecasting.
+- 分类：PatchTST；当前 TimeXer 没有分类头，不能做同构分类消融。
+- 预测：PatchTST 和 TimeXer，覆盖四个工况。
+- 缺失的 patch=8/4/2/1 以及 dataset14 的 patch=16 由 `launch_missing_requested_20260720.sh` 补跑。
 
-Models: `Transformer TimesNet PatchTST DLinear iTransformer`.
+## D. 时序基础模型长上下文
 
-### C. Patch length sweep
+启动器：`scripts/experiments/launch_foundation_context40_20260717.sh`
 
-Launcher: `scripts/experiments/launch_patchlen_sweep_20260717.sh`
+- 只使用 2→3 工况；每个历史航班是前30+后50，共 80 点。
+- 历史航班数为 2、3、5、8；用户描述中的 `5*89` 按与其他设置一致的 `5*80` 执行。
+- 当前目标航班给出前 40 点，预测后 40 点。
+- 对应 `seq_len` 分别为 200、280、440、680，`pred_len=40`。
+- 模型：Chronos-2、Toto-2.0、Moirai、TiRex-2。
 
-Patch lengths: `16 8 4 2 1`.
+TiRex-2 需要独立 Python>=3.11、torch>=2.8 环境和已授权的 Hugging Face token，启动器为 `scripts/experiments/launch_tirex2_context40_20260720.sh`。
 
-- Classification: PatchTST only.  The current TimeXer implementation has no
-  classification head.
-- Forecast: PatchTST and TimeXer, all four forecast anchors.
+## E. 单变量基础模型预测
 
-### D. Foundation-model history context
+启动器：`scripts/experiments/launch_univariate_foundation_20260717.sh`
 
-Launcher: `scripts/experiments/launch_foundation_context40_20260717.sh`
+默认目标别名为 `manifold_pressure`，按以下顺序为每个数据集解析存在的压力变量：
 
-Anchor: 2→3 only.  Each historical flight segment has 80 points, using
-30-before/50-after around the transition.  For the target flight, the first 40
-points are given as current context and the last 40 are predicted.
+`PRECOOL_PRESS1 → PRECOOL_PRESS2 → BMPS1 → BMPS2`
 
-History counts: `2 3 5 8`.
+默认模型为 Sundial，覆盖四个工况。
 
-Therefore:
+## F. 预测误差异常检测
 
-- `hist2`: `seq_len=200`, `pred_len=40`
-- `hist3`: `seq_len=280`, `pred_len=40`
-- `hist5`: `seq_len=440`, `pred_len=40`
-- `hist8`: `seq_len=680`, `pred_len=40`
+启动器：`scripts/experiments/launch_forecast_head_anomaly_20260719.sh`
 
-Zero-shot models: `Chronos2 Toto Moirai TiRex`.
+- 五个预测模型只用正常 TRAIN 拟合预测能力；
+- early stopping 只使用正常 VAL 的预测损失；
+- 阈值选择使用独立的正常+故障 VAL，不接触 TEST；
+- `forecast_anomaly_score=auto` 在 MSE、MAE、最大通道 MSE、最大时间点 MSE 之间按 VAL F1 自动选择；
+- 每种分数的候选阈值和 VAL 指标保存到 `threshold_sweep.csv`；
+- TEST 只评估最终选择一次，并输出 balanced accuracy、F1、AUROC、AUPRC 与 TN/FP/FN/TP。
 
-### E. Univariate foundation forecasting
-
-Launcher: `scripts/experiments/launch_univariate_foundation_20260717.sh`
-
-The compact cache is projected to one pressure-like variable.  Default target
-alias: `manifold_pressure`, resolved in order:
-
-`PRECOOL_PRESS1`, `PRECOOL_PRESS2`, `BMPS1`, `BMPS2`.
-
-Default model: `Sundial`.
-
-### F. Anomaly detection diagnosis
-
-Current one-class anomaly protocol:
-
-- Train only on chronological normal training flights.
-- Select threshold from normal validation reconstruction error.
-- Test on held-out normal flights plus all fault flights.
-
-The previous p95 results have low recall, so accuracy can look misleading.  If
-rerun is needed, use a threshold sweep (e.g. p80/p85/p90/p95) and/or longer
-`SEQ_LEN` to avoid losing short fault cues through resampling.
+预测 MSE 与异常检测指标的相关性由 `scripts/analysis/analyze_forecast_anomaly_correlation.py` 计算，不使用 TEST 反向调参。

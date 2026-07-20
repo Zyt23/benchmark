@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -57,6 +58,18 @@ def normal_count(cache_path: Path) -> int:
         return int((labels == 0).sum())
 
 
+def feature_cols(cache_path: Path) -> list[str]:
+    with np.load(cache_path, allow_pickle=False) as data:
+        if "feature_cols" not in data.files:
+            return [f"var_{i}" for i in range(int(data["x"].shape[2]))]
+        return data["feature_cols"].astype(str).tolist()
+
+
+def feature_tag(cols: list[str]) -> str:
+    digest = hashlib.sha1("\n".join(cols).encode("utf-8")).hexdigest()[:10]
+    return f"f{len(cols)}_{digest}"
+
+
 def factor_to_count(base_cache: Path, extra_count: int, factor: int) -> int:
     if factor < 2:
         raise ValueError(f"factor must be >=2, got {factor}")
@@ -92,19 +105,30 @@ def main() -> None:
     anchors = parse_list(args.anchors, FORECAST_ANCHORS.keys())
     args.work_root.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []
+    extra_cache_by_key: dict[tuple[str, str, str], dict] = {}
+
+    def cached_extra(zip_tag: str, zip_path: Path, anchor_key: str,
+                     anchors: list[tuple[int, int, int, int]], cols: list[str]) -> dict:
+        key = (zip_tag, anchor_key, tuple(cols))
+        if key not in extra_cache_by_key:
+            cache_path = args.work_root / f"{zip_tag}_{anchor_key}_{feature_tag(cols)}_all.npz"
+            extra_cache_by_key[key] = build_extra_cache(
+                zip_path,
+                cache_path,
+                anchors,
+                max_count=None,
+                feature_cols=cols,
+            )
+        return extra_cache_by_key[key]
 
     for spec_idx, (zip_path, datasets) in enumerate(specs):
         zip_tag = f"extra{spec_idx}"
         if "classification" in args.tasks:
-            extra = build_extra_cache(
-                zip_path,
-                args.work_root / f"{zip_tag}_classification_all.npz",
-                CLASSIFICATION_ANCHORS,
-                max_count=None,
-            )
-            extra_count = int(extra["x"].shape[0])
             for dataset in datasets:
                 base_cache = args.base_classification_root / dataset / "qar_compact_shiftN80.npz"
+                cols = feature_cols(base_cache)
+                extra = cached_extra(zip_tag, zip_path, "classification", CLASSIFICATION_ANCHORS, cols)
+                extra_count = int(extra["x"].shape[0])
                 for factor in args.factors:
                     take = factor_to_count(base_cache, extra_count, factor)
                     out_dataset = f"{dataset}_normalx{factor}"
@@ -124,15 +148,11 @@ def main() -> None:
 
         if "forecast" in args.tasks:
             for anchor in anchors:
-                extra = build_extra_cache(
-                    zip_path,
-                    args.work_root / f"{zip_tag}_{anchor}_all.npz",
-                    FORECAST_ANCHORS[anchor],
-                    max_count=None,
-                )
-                extra_count = int(extra["x"].shape[0])
                 for dataset in datasets:
                     base_cache = args.base_forecast_segment_root / anchor / dataset / "qar_compact_shiftN80.npz"
+                    cols = feature_cols(base_cache)
+                    extra = cached_extra(zip_tag, zip_path, anchor, FORECAST_ANCHORS[anchor], cols)
+                    extra_count = int(extra["x"].shape[0])
                     for factor in args.factors:
                         take = factor_to_count(base_cache, extra_count, factor)
                         out_dataset = f"{dataset}_normalx{factor}"

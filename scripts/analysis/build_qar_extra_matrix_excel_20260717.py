@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Build matrix-style Excel sheets for the 20260717 QAR extra experiments.
+"""Build matrix-style Excel sheets for QAR extra experiments.
 
-Input is the long-form CSVs produced by ``collect_qar_experiment_results_20260717.py``.
+Input is the long-form CSVs produced by
+``scripts/analysis/collect_qar_experiment_results_20260717.py``.
+
 Rows are models, columns are datasets, and each cell stores a compact metric
-bundle.  The workbook also keeps the audit table, so missing/failed jobs remain
-visible instead of silently disappearing.
+bundle.  The workbook also keeps long-form sheets and the audit table so
+missing/failed jobs remain visible.
 """
 
 from __future__ import annotations
@@ -13,9 +15,10 @@ from __future__ import annotations
 import argparse
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
+from pandas.errors import EmptyDataError
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -50,24 +53,42 @@ FAULT_DESC = {
 }
 
 MODEL_ORDER = [
+    "OLinear",
+    "xPatch",
+    "TimeMixer++",
+    "DUET",
+    "TimeMixer",
+    "TimeXer",
+    "Autoformer",
     "Transformer",
     "TimesNet",
     "PatchTST",
     "DLinear",
     "iTransformer",
-    "TimeXer",
     "Chronos2",
     "Toto",
     "Moirai",
+    "TiRex-2",
     "TiRex",
     "Sundial",
+    "TabPFN",
+    "MiniROCKET",
+    "MultiROCKET",
+    "KANAD",
+    "AnomalyTransformer",
+    "TranAD",
+    "USAD",
+    "OmniAnomaly",
 ]
 
 
 def read_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
-    return pd.read_csv(path)
+    try:
+        return pd.read_csv(path)
+    except EmptyDataError:
+        return pd.DataFrame()
 
 
 def fmt(value: Any) -> str:
@@ -104,6 +125,11 @@ def clean_dataset_name(value: Any) -> str:
         "_normal_keep25",
         "_normalx2",
         "_normalx4",
+        "_aug0_1000",
+        "_aug0_2000",
+        "_aug0_4000",
+        "_aug0_19119",
+        "_aug0_20000",
     ]:
         if text.endswith(suffix):
             return text[: -len(suffix)]
@@ -157,7 +183,7 @@ def latest_success_or_last(sub: pd.DataFrame) -> pd.Series | None:
 def classification_cell(row: pd.Series | None) -> str:
     if row is None:
         return ""
-    if str(row.get("status", "")) not in {"0", "0.0"}:
+    if str(row.get("status", "")) not in {"0", "0.0", ""}:
         return "FAILED"
     return "\n".join(
         [
@@ -173,7 +199,7 @@ def classification_cell(row: pd.Series | None) -> str:
 def forecast_cell(row: pd.Series | None) -> str:
     if row is None:
         return ""
-    if str(row.get("status", "")) not in {"0", "0.0"}:
+    if str(row.get("status", "")) not in {"0", "0.0", ""}:
         return "FAILED"
     return "\n".join(
         [
@@ -182,6 +208,23 @@ def forecast_cell(row: pd.Series | None) -> str:
             f"rmse={fmt(row.get('rmse'))}",
             f"mape={fmt(row.get('mape'))}",
             f"mspe={fmt(row.get('mspe'))}",
+        ]
+    )
+
+
+def anomaly_cell(row: pd.Series | None) -> str:
+    if row is None:
+        return ""
+    if str(row.get("status", "")) not in {"0", "0.0", ""}:
+        return "FAILED"
+    return "\n".join(
+        [
+            f"acc={fmt(row.get('accuracy'))}",
+            f"f1={fmt(row.get('f1'))}",
+            f"precision={fmt(row.get('precision'))}",
+            f"recall={fmt(row.get('recall'))}",
+            f"TN={fmt(row.get('TN'))} FP={fmt(row.get('FP'))}",
+            f"FN={fmt(row.get('FN'))} TP={fmt(row.get('TP'))}",
         ]
     )
 
@@ -209,7 +252,13 @@ def write_dataframe_sheet(wb: Workbook, title: str, df: pd.DataFrame) -> None:
         ws.column_dimensions[get_column_letter(col)].width = min(60, max(12, len(str(df.columns[col - 1])) + 2))
 
 
-def write_matrix_sheet(wb: Workbook, title: str, df: pd.DataFrame, task_name: str, cell_builder) -> None:
+def write_matrix_sheet(
+    wb: Workbook,
+    title: str,
+    df: pd.DataFrame,
+    task_name: str,
+    cell_builder: Callable[[pd.Series | None], str],
+) -> None:
     ws = wb.create_sheet(title[:31])
     thin = Side(style="thin", color="D9E2F3")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -249,12 +298,9 @@ def write_matrix_sheet(wb: Workbook, title: str, df: pd.DataFrame, task_name: st
         return
 
     df = prepare_df(df)
-    key_cols = group_key_columns(df)
-    if not key_cols:
-        key_cols = ["variant"]
+    key_cols = group_key_columns(df) or ["variant"]
 
-    grouped = df.groupby(key_cols, dropna=False, sort=False)
-    for _, block in grouped:
+    for _, block in df.groupby(key_cols, dropna=False, sort=False):
         label = group_label(block.iloc[0], task_name)
         put(row_idx, 1, label, fill_group, font_bold)
         ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=len(DATASETS) + 1)
@@ -287,16 +333,24 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
     cls = read_csv(input_dir / "all_classification_metrics.csv")
     forecast = read_csv(input_dir / "all_forecast_metrics.csv")
     zero = read_csv(input_dir / "all_zero_shot_metrics.csv")
+    anomaly = read_csv(input_dir / "all_anomaly_metrics.csv")
+    forecast_anomaly = read_csv(input_dir / "all_forecast_anomaly_metrics.csv")
     audit = read_csv(input_dir / "job_audit.csv")
     expected = read_csv(input_dir / "expected_jobs.csv")
 
     wb = Workbook()
-    default = wb.active
-    wb.remove(default)
+    wb.remove(wb.active)
     write_matrix_sheet(wb, "分类矩阵", cls, "分类", classification_cell)
     write_matrix_sheet(wb, "预测矩阵", forecast, "预测", forecast_cell)
-    write_matrix_sheet(wb, "时序大模型矩阵", zero, "时序大模型/单变量", forecast_cell)
-    write_dataframe_sheet(wb, "审计", audit)
+    write_matrix_sheet(wb, "时序大模型矩阵", zero, "时序大模型-单变量预测", forecast_cell)
+    write_matrix_sheet(wb, "异常检测矩阵", anomaly, "异常检测", anomaly_cell)
+    write_matrix_sheet(wb, "预测头异常检测矩阵", forecast_anomaly, "预测头异常检测", anomaly_cell)
+    write_dataframe_sheet(wb, "classification_long", cls)
+    write_dataframe_sheet(wb, "forecast_long", forecast)
+    write_dataframe_sheet(wb, "zero_shot_long", zero)
+    write_dataframe_sheet(wb, "anomaly_long", anomaly)
+    write_dataframe_sheet(wb, "forecast_anomaly_long", forecast_anomaly)
+    write_dataframe_sheet(wb, "audit", audit)
     write_dataframe_sheet(wb, "expected_jobs", expected)
 
     output.parent.mkdir(parents=True, exist_ok=True)

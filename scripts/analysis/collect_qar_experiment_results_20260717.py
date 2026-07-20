@@ -22,6 +22,14 @@ import pandas as pd
 
 
 FORECAST_METRICS = ["mae", "mse", "rmse", "mape", "mspe"]
+MODEL_DISPLAY_NAMES = {"TiRex2": "TiRex-2"}
+ANOMALY_METRICS = [
+    "accuracy", "balanced_accuracy", "precision", "recall", "f1",
+    "macro_f1", "weighted_f1", "specificity", "auroc", "auprc",
+    "true_counts", "pred_counts",
+    "TN", "FP", "FN", "TP", "threshold", "threshold_source",
+    "threshold_percentile", "level", "score",
+]
 
 
 def read_tsv(path: Path) -> list[dict[str, str]]:
@@ -95,6 +103,28 @@ def parse_forecast_result(result_dir: Path) -> dict[str, Any]:
     return dict(zip(FORECAST_METRICS, values))
 
 
+def parse_forecast_anomaly_result(result_dir: Path) -> dict[str, Any]:
+    metrics_path = result_dir / "forecast_anomaly_metrics.csv"
+    if not metrics_path.exists():
+        return {name: np.nan for name in ANOMALY_METRICS}
+    rows = pd.read_csv(metrics_path)
+    if rows.empty:
+        return {name: np.nan for name in ANOMALY_METRICS}
+    row = rows.iloc[-1].to_dict()
+    return {name: row.get(name, np.nan) for name in ANOMALY_METRICS}
+
+
+def parse_anomaly_result(result_dir: Path) -> dict[str, Any]:
+    metrics_path = result_dir / "anomaly_metrics.csv"
+    if not metrics_path.exists():
+        return {name: np.nan for name in ANOMALY_METRICS}
+    rows = pd.read_csv(metrics_path)
+    if rows.empty:
+        return {name: np.nan for name in ANOMALY_METRICS}
+    row = rows.iloc[-1].to_dict()
+    return {name: row.get(name, np.nan) for name in ANOMALY_METRICS}
+
+
 def find_result_dir(root: Path, task: str, run_tag: str, dataset: str, model: str,
                     result_dir_raw: str) -> Path | None:
     if result_dir_raw:
@@ -105,6 +135,12 @@ def find_result_dir(root: Path, task: str, run_tag: str, dataset: str, model: st
     if task == "classification":
         base = root / "results"
         marker = "result_classification.txt"
+    elif task == "forecast_anomaly_detection":
+        base = root / "results"
+        marker = "forecast_anomaly_metrics.csv"
+    elif task == "anomaly_detection":
+        base = root / "results"
+        marker = "anomaly_metrics.csv"
     else:
         base = root / "results"
         marker = "metrics.npy"
@@ -140,17 +176,23 @@ def summary_dir_for_task(root: Path, task: str, run_tag: str) -> Path:
         return root / "logs" / "long_term_forecast" / run_tag
     if task == "zero_shot_forecast":
         return root / "logs" / "zero_shot_forecast" / run_tag
+    if task == "forecast_anomaly_detection":
+        return root / "logs" / "forecast_anomaly_detection" / run_tag
+    if task == "anomaly_detection":
+        return root / "logs" / "anomaly_detection" / run_tag
     return root / "logs" / run_tag
 
 
-def collect(root: Path, expected: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def collect(root: Path, expected: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     cls_rows: list[dict[str, Any]] = []
     forecast_rows: list[dict[str, Any]] = []
     zero_rows: list[dict[str, Any]] = []
+    anomaly_rows: list[dict[str, Any]] = []
+    forecast_anomaly_rows: list[dict[str, Any]] = []
     audit_rows: list[dict[str, Any]] = []
 
     if expected.empty:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     for _, exp in expected.iterrows():
         task = str(exp.get("task", ""))
@@ -183,7 +225,7 @@ def collect(root: Path, expected: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
                 "target": exp.get("target", ""),
                 "anchor": exp.get("anchor", ""),
                 "dataset": dataset_name,
-                "model": row_model,
+                "model": MODEL_DISPLAY_NAMES.get(row_model, row_model),
                 "status": status,
                 "run_tag": run_tag,
                 "summary_dir": str(summary_dir),
@@ -198,6 +240,12 @@ def collect(root: Path, expected: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
             elif task == "zero_shot_forecast":
                 result = parse_forecast_result(result_dir) if result_dir else {name: np.nan for name in FORECAST_METRICS}
                 zero_rows.append({**common, **result})
+            elif task == "forecast_anomaly_detection":
+                result = parse_forecast_anomaly_result(result_dir) if result_dir else {name: np.nan for name in ANOMALY_METRICS}
+                forecast_anomaly_rows.append({**common, **result})
+            elif task == "anomaly_detection":
+                result = parse_anomaly_result(result_dir) if result_dir else {name: np.nan for name in ANOMALY_METRICS}
+                anomaly_rows.append({**common, **result})
 
         missing = [d for d in expected_datasets if (d, model) not in seen]
         audit_rows.append({
@@ -208,7 +256,7 @@ def collect(root: Path, expected: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
             "history_count": exp.get("history_count", ""),
             "target": exp.get("target", ""),
             "anchor": exp.get("anchor", ""),
-            "model": model,
+            "model": MODEL_DISPLAY_NAMES.get(model, model),
             "run_tag": run_tag,
             "expected_count": len(expected_datasets),
             "summary_count": len(summary_rows),
@@ -224,18 +272,24 @@ def collect(root: Path, expected: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
         pd.DataFrame(cls_rows),
         pd.DataFrame(forecast_rows),
         pd.DataFrame(zero_rows),
+        pd.DataFrame(anomaly_rows),
+        pd.DataFrame(forecast_anomaly_rows),
         pd.DataFrame(audit_rows),
     )
 
 
 def write_outputs(output_dir: Path, expected: pd.DataFrame, cls: pd.DataFrame,
-                  forecast: pd.DataFrame, zero: pd.DataFrame, audit: pd.DataFrame) -> Path:
+                  forecast: pd.DataFrame, zero: pd.DataFrame,
+                  anomaly: pd.DataFrame, forecast_anomaly: pd.DataFrame,
+                  audit: pd.DataFrame) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_map = {
         "expected_jobs.csv": expected,
         "all_classification_metrics.csv": cls,
         "all_forecast_metrics.csv": forecast,
         "all_zero_shot_metrics.csv": zero,
+        "all_anomaly_metrics.csv": anomaly,
+        "all_forecast_anomaly_metrics.csv": forecast_anomaly,
         "job_audit.csv": audit,
     }
     for name, df in csv_map.items():
@@ -248,6 +302,8 @@ def write_outputs(output_dir: Path, expected: pd.DataFrame, cls: pd.DataFrame,
         cls.to_excel(writer, index=False, sheet_name="classification_long")
         forecast.to_excel(writer, index=False, sheet_name="forecast_long")
         zero.to_excel(writer, index=False, sheet_name="zero_shot_long")
+        anomaly.to_excel(writer, index=False, sheet_name="anomaly_long")
+        forecast_anomaly.to_excel(writer, index=False, sheet_name="forecast_anomaly_long")
 
         incomplete = audit[(audit.get("missing_count", 0) != 0) | (audit.get("failed_count", 0) != 0)] if not audit.empty else audit
         incomplete.to_excel(writer, index=False, sheet_name="incomplete")
@@ -267,8 +323,8 @@ def main() -> None:
     output_dir = (root / args.output_dir).resolve() if not args.output_dir.is_absolute() else args.output_dir
 
     expected = read_expected(artifact_root)
-    cls, forecast, zero, audit = collect(root, expected)
-    xlsx = write_outputs(output_dir, expected, cls, forecast, zero, audit)
+    cls, forecast, zero, anomaly, forecast_anomaly, audit = collect(root, expected)
+    xlsx = write_outputs(output_dir, expected, cls, forecast, zero, anomaly, forecast_anomaly, audit)
     print(xlsx)
 
 

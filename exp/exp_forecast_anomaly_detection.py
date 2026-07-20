@@ -1,7 +1,16 @@
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
 from utils.tools import EarlyStopping, adjust_learning_rate
-from sklearn.metrics import accuracy_score, confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    balanced_accuracy_score,
+    confusion_matrix,
+    f1_score,
+    precision_recall_fscore_support,
+    roc_auc_score,
+)
+import csv
 import torch
 import torch.nn as nn
 from torch import optim
@@ -130,8 +139,12 @@ class Exp_Forecast_Anomaly_Detection(Exp_Basic):
         return self.model
 
     def _collect_scores(self, loader):
-        mse_scores = []
-        mae_scores = []
+        score_parts = {
+            'mse': [],
+            'mae': [],
+            'channel_mse_max': [],
+            'time_mse_max': [],
+        }
         labels = []
         self.model.eval()
         with torch.no_grad():
@@ -139,23 +152,28 @@ class Exp_Forecast_Anomaly_Detection(Exp_Basic):
                 batch_x, batch_y, batch_x_mark, batch_y_mark, batch_label = batch
                 outputs, true = self._forward_forecast(batch_x, batch_y, batch_x_mark, batch_y_mark)
                 err = outputs - true
-                mse = torch.mean(err ** 2, dim=(1, 2)).detach().cpu().numpy()
-                mae = torch.mean(torch.abs(err), dim=(1, 2)).detach().cpu().numpy()
-                mse_scores.append(mse)
-                mae_scores.append(mae)
+                squared = err ** 2
+                score_parts['mse'].append(
+                    torch.mean(squared, dim=(1, 2)).detach().cpu().numpy())
+                score_parts['mae'].append(
+                    torch.mean(torch.abs(err), dim=(1, 2)).detach().cpu().numpy())
+                score_parts['channel_mse_max'].append(
+                    torch.mean(squared, dim=1).amax(dim=1).detach().cpu().numpy())
+                score_parts['time_mse_max'].append(
+                    torch.mean(squared, dim=2).amax(dim=1).detach().cpu().numpy())
                 labels.append(batch_label.detach().cpu().numpy().reshape(-1))
-        return (
-            np.concatenate(mse_scores, axis=0),
-            np.concatenate(mae_scores, axis=0),
-            np.concatenate(labels, axis=0).astype(int),
-        )
+        scores = {
+            name: np.concatenate(parts, axis=0).astype(np.float64, copy=False)
+            for name, parts in score_parts.items()
+        }
+        return scores, np.concatenate(labels, axis=0).astype(int)
 
     @staticmethod
-    def _best_f1_threshold(scores, labels):
+    def _best_f1_threshold(scores, labels, score_name):
         labels = np.asarray(labels).astype(int)
         scores = np.asarray(scores).astype(float)
         if labels.max(initial=0) == 0 or scores.size == 0:
-            return None, None
+            return None, None, []
 
         percentiles = np.concatenate([
             np.linspace(50.0, 95.0, 46),
@@ -164,40 +182,97 @@ class Exp_Forecast_Anomaly_Detection(Exp_Basic):
         ])
         candidates = np.unique(np.percentile(scores, percentiles))
         best = None
+        sweep_rows = []
         for threshold in candidates:
             pred = (scores > threshold).astype(int)
             precision, recall, f1, _ = precision_recall_fscore_support(
                 labels, pred, average='binary', zero_division=0)
             acc = accuracy_score(labels, pred)
-            current = (float(f1), float(acc), float(recall), float(precision), float(threshold))
+            balanced_acc = balanced_accuracy_score(labels, pred)
+            current = (
+                float(f1), float(balanced_acc), float(recall),
+                float(precision), float(acc), float(threshold),
+            )
+            sweep_rows.append({
+                'score': score_name,
+                'threshold': float(threshold),
+                'val_accuracy': float(acc),
+                'val_balanced_accuracy': float(balanced_acc),
+                'val_precision': float(precision),
+                'val_recall': float(recall),
+                'val_f1': float(f1),
+            })
             if best is None or current[:4] > best[:4]:
                 best = current
         if best is None:
-            return None, None
-        f1, acc, recall, precision, threshold = best
+            return None, None, sweep_rows
+        f1, balanced_acc, recall, precision, acc, threshold = best
         return threshold, {
             'val_accuracy': acc,
+            'val_balanced_accuracy': balanced_acc,
             'val_precision': precision,
             'val_recall': recall,
             'val_f1': f1,
-        }
+        }, sweep_rows
 
-    def _select_threshold(self, train_scores, val_scores, threshold_scores, threshold_labels):
+    def _select_threshold(self, train_scores, val_scores, threshold_scores,
+                          threshold_labels, score_name):
         source = getattr(self.args, 'anomaly_threshold_source', 'val')
         percentile = float(getattr(self.args, 'anomaly_threshold_percentile', 99.0))
 
         if source == 'val_mixed_best_f1':
-            threshold, val_metrics = self._best_f1_threshold(threshold_scores, threshold_labels)
+            threshold, val_metrics, sweep_rows = self._best_f1_threshold(
+                threshold_scores, threshold_labels, score_name)
             if threshold is not None:
-                return float(threshold), source, percentile, val_metrics
+                return float(threshold), source, percentile, val_metrics, sweep_rows
             source = 'val'
 
         if source == 'train':
-            return float(np.percentile(train_scores, percentile)), source, percentile, {}
+            return float(np.percentile(train_scores, percentile)), source, percentile, {}, []
         if source == 'combined':
             combined = np.concatenate([train_scores, val_scores], axis=0)
-            return float(np.percentile(combined, percentile)), source, percentile, {}
-        return float(np.percentile(val_scores, percentile)), 'val', percentile, {}
+            return float(np.percentile(combined, percentile)), source, percentile, {}, []
+        return float(np.percentile(val_scores, percentile)), 'val', percentile, {}, []
+
+    def _select_score_and_threshold(self, train_scores, val_scores,
+                                    threshold_scores, threshold_labels):
+        requested = str(getattr(self.args, 'forecast_anomaly_score', 'auto')).lower()
+        source = str(getattr(self.args, 'anomaly_threshold_source', 'val'))
+        if requested == 'auto' and source == 'val_mixed_best_f1':
+            candidate_names = list(train_scores)
+        elif requested == 'auto':
+            candidate_names = ['mse']
+        else:
+            candidate_names = [requested]
+
+        choices = []
+        all_sweep_rows = []
+        for score_name in candidate_names:
+            threshold, threshold_source, percentile, val_metrics, sweep_rows = self._select_threshold(
+                train_scores[score_name],
+                val_scores[score_name],
+                threshold_scores[score_name],
+                threshold_labels,
+                score_name,
+            )
+            all_sweep_rows.extend(sweep_rows)
+            rank_key = (
+                float(val_metrics.get('val_f1', -1.0)),
+                float(val_metrics.get('val_balanced_accuracy', -1.0)),
+                float(val_metrics.get('val_recall', -1.0)),
+                float(val_metrics.get('val_precision', -1.0)),
+            )
+            choices.append((rank_key, score_name, threshold, threshold_source,
+                            percentile, val_metrics))
+
+        _, score_name, threshold, threshold_source, percentile, val_metrics = max(
+            choices, key=lambda item: item[0])
+        for row in all_sweep_rows:
+            row['selected'] = int(
+                row['score'] == score_name
+                and np.isclose(float(row['threshold']), float(threshold)))
+        return (score_name, float(threshold), threshold_source, percentile,
+                val_metrics, all_sweep_rows)
 
     def test(self, setting, test=0):
         train_data, train_loader = self._get_data(flag='train')
@@ -212,27 +287,34 @@ class Exp_Forecast_Anomaly_Detection(Exp_Basic):
                 map_location=self.device,
             ))
 
-        train_mse, train_mae, _ = self._collect_scores(train_loader)
-        val_mse, val_mae, _ = self._collect_scores(val_loader)
-        thre_mse, thre_mae, thre_labels = self._collect_scores(threshold_loader)
-        test_mse, test_mae, gt = self._collect_scores(test_loader)
+        train_score_map, _ = self._collect_scores(train_loader)
+        val_score_map, _ = self._collect_scores(val_loader)
+        threshold_score_map, thre_labels = self._collect_scores(threshold_loader)
+        test_score_map, gt = self._collect_scores(test_loader)
 
-        score_name = str(getattr(self.args, 'forecast_anomaly_score', 'mse')).lower()
-        if score_name == 'mae':
-            train_scores, val_scores, threshold_scores, test_scores = train_mae, val_mae, thre_mae, test_mae
-        else:
-            score_name = 'mse'
-            train_scores, val_scores, threshold_scores, test_scores = train_mse, val_mse, thre_mse, test_mse
-
-        threshold, threshold_source, threshold_percentile, val_metrics = self._select_threshold(
-            train_scores, val_scores, threshold_scores, thre_labels)
+        (score_name, threshold, threshold_source, threshold_percentile,
+         val_metrics, sweep_rows) = self._select_score_and_threshold(
+            train_score_map, val_score_map, threshold_score_map, thre_labels)
+        train_scores = train_score_map[score_name]
+        val_scores = val_score_map[score_name]
+        test_scores = test_score_map[score_name]
 
         pred = (test_scores > threshold).astype(int)
         gt = np.asarray(gt).astype(int)
         accuracy = accuracy_score(gt, pred)
         precision, recall, f_score, _ = precision_recall_fscore_support(
             gt, pred, average='binary', zero_division=0)
+        balanced_accuracy = balanced_accuracy_score(gt, pred)
+        macro_f1 = f1_score(gt, pred, average='macro', zero_division=0)
+        weighted_f1 = f1_score(gt, pred, average='weighted', zero_division=0)
         tn, fp, fn, tp = confusion_matrix(gt, pred, labels=[0, 1]).ravel()
+        specificity = float(tn / (tn + fp)) if (tn + fp) else 0.0
+        if np.unique(gt).size == 2:
+            auroc = float(roc_auc_score(gt, test_scores))
+            auprc = float(average_precision_score(gt, test_scores))
+        else:
+            auroc = float('nan')
+            auprc = float('nan')
         true_counts = np.bincount(gt.astype(int), minlength=2)
         pred_counts = np.bincount(pred.astype(int), minlength=2)
 
@@ -241,43 +323,54 @@ class Exp_Forecast_Anomaly_Detection(Exp_Basic):
             threshold_source, threshold_percentile, score_name))
         if val_metrics:
             print("Threshold validation metrics: {}".format(val_metrics))
-        print("Accuracy : {:0.4f}, Precision : {:0.4f}, Recall : {:0.4f}, F-score : {:0.4f}".format(
-            accuracy, precision, recall, f_score))
+        print("Accuracy: {:0.4f}, balanced accuracy: {:0.4f}, macro F1: {:0.4f}".format(
+            accuracy, balanced_accuracy, macro_f1))
+        print("Precision: {:0.4f}, Recall: {:0.4f}, anomaly F1: {:0.4f}, AUROC: {:0.4f}, AUPRC: {:0.4f}".format(
+            precision, recall, f_score, auroc, auprc))
         print("true_counts: {}, pred_counts: {}, TN/FP/FN/TP: {}/{}/{}/{}".format(
             true_counts.tolist(), pred_counts.tolist(), int(tn), int(fp), int(fn), int(tp)))
 
         folder_path = './results/' + setting + '/'
         os.makedirs(folder_path, exist_ok=True)
-        with open(os.path.join(folder_path, 'forecast_anomaly_metrics.csv'), 'w', encoding='utf-8') as f:
-            f.write(
-                'setting,accuracy,precision,recall,f1,true_counts,pred_counts,'
-                'TN,FP,FN,TP,threshold,threshold_source,threshold_percentile,score,'
-                'val_accuracy,val_precision,val_recall,val_f1,train_score_mean,val_score_mean,test_score_mean\n'
-            )
-            f.write('{},{:.10f},{:.10f},{:.10f},{:.10f},"{}","{}",{},{},{},{},{:.10f},{},{:.4f},{},{},{},{},{},{:.10f},{:.10f},{:.10f}\n'.format(
-                setting,
-                float(accuracy),
-                float(precision),
-                float(recall),
-                float(f_score),
-                true_counts.tolist(),
-                pred_counts.tolist(),
-                int(tn),
-                int(fp),
-                int(fn),
-                int(tp),
-                float(threshold),
-                threshold_source,
-                threshold_percentile,
-                score_name,
-                val_metrics.get('val_accuracy', ''),
-                val_metrics.get('val_precision', ''),
-                val_metrics.get('val_recall', ''),
-                val_metrics.get('val_f1', ''),
-                float(np.mean(train_scores)),
-                float(np.mean(val_scores)),
-                float(np.mean(test_scores)),
-            ))
+        metric_row = {
+            'setting': setting,
+            'accuracy': float(accuracy),
+            'balanced_accuracy': float(balanced_accuracy),
+            'precision': float(precision),
+            'recall': float(recall),
+            'f1': float(f_score),
+            'macro_f1': float(macro_f1),
+            'weighted_f1': float(weighted_f1),
+            'specificity': specificity,
+            'auroc': auroc,
+            'auprc': auprc,
+            'true_counts': true_counts.tolist(),
+            'pred_counts': pred_counts.tolist(),
+            'TN': int(tn),
+            'FP': int(fp),
+            'FN': int(fn),
+            'TP': int(tp),
+            'threshold': float(threshold),
+            'threshold_source': threshold_source,
+            'threshold_percentile': float(threshold_percentile),
+            'score': score_name,
+            **val_metrics,
+            'train_score_mean': float(np.mean(train_scores)),
+            'val_score_mean': float(np.mean(val_scores)),
+            'test_score_mean': float(np.mean(test_scores)),
+        }
+        metrics_path = os.path.join(folder_path, 'forecast_anomaly_metrics.csv')
+        with open(metrics_path, 'w', encoding='utf-8', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(metric_row))
+            writer.writeheader()
+            writer.writerow(metric_row)
+
+        if sweep_rows:
+            sweep_path = os.path.join(folder_path, 'threshold_sweep.csv')
+            with open(sweep_path, 'w', encoding='utf-8', newline='') as handle:
+                writer = csv.DictWriter(handle, fieldnames=list(sweep_rows[0]))
+                writer.writeheader()
+                writer.writerows(sweep_rows)
 
         np.save(os.path.join(folder_path, 'test_scores.npy'), test_scores)
         np.save(os.path.join(folder_path, 'test_labels.npy'), gt)
