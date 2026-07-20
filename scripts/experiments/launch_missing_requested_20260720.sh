@@ -8,6 +8,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-experiment_artifacts/QAR_extra_experiments_20260717}"
 BLOCKS="${BLOCKS:-normal_aug_patchtst patch_sweep forecast_anomaly}"
 GPU_LIST="${GPU_LIST:-0 1 2 3 4 5 6 7}"
+GPU_LIST="${GPU_LIST//,/ }"
 MAX_PARALLEL="${MAX_PARALLEL:-8}"
 PYTHON_BIN="${PYTHON_BIN:-/home/para/anaconda3/bin/python}"
 
