@@ -7,6 +7,7 @@ ANCHORS="${ANCHORS:-predict_2_3 predict_4_5 predict_5_6 predict_8_9}"
 PATCH_VALUES="${PATCH_VALUES:-16 8 4 2 1}"
 PATCH_FORECAST_MODELS="${PATCH_FORECAST_MODELS:-PatchTST TimeXer}"
 RUN_CLASSIFICATION="${RUN_CLASSIFICATION:-1}"
+RUN_FORECAST="${RUN_FORECAST:-1}"
 GPU_LIST="${GPU_LIST:-0 1 2 3 4}"
 MAX_PARALLEL="${MAX_PARALLEL:-5}"
 
@@ -44,13 +45,15 @@ for patch_len in ${PATCH_VALUES}; do
     printf "classification\t%s\t\tPatchTST\t%s\t%s\t%s\n" "${patch_len}" "${DATASETS}" "${run_tag}" "${BASE_CLS_ROOT}" >> "${expected}"
   fi
 
-  for anchor in ${ANCHORS}; do
-    for model in ${PATCH_FORECAST_MODELS}; do
-      root="${BASE_FORECAST_ROOT}/${anchor}"
-      run_tag="patchlen${patch_len}_forecast_${anchor}_${model}_${RUN_SUFFIX}"
-      printf "forecast\t%s\t%s\t%s\t%s\t%s\t%s\n" "${patch_len}" "${anchor}" "${model}" "${DATASETS}" "${run_tag}" "${root}" >> "${expected}"
+  if [[ "${RUN_FORECAST}" != "0" ]]; then
+    for anchor in ${ANCHORS}; do
+      for model in ${PATCH_FORECAST_MODELS}; do
+        root="${BASE_FORECAST_ROOT}/${anchor}"
+        run_tag="patchlen${patch_len}_forecast_${anchor}_${model}_${RUN_SUFFIX}"
+        printf "forecast\t%s\t%s\t%s\t%s\t%s\t%s\n" "${patch_len}" "${anchor}" "${model}" "${DATASETS}" "${run_tag}" "${root}" >> "${expected}"
+      done
     done
-  done
+  fi
 done
 
 for patch_len in ${PATCH_VALUES}; do
@@ -84,8 +87,9 @@ for patch_len in ${PATCH_VALUES}; do
     ) > "${log}" 2>&1 < /dev/null &
   fi
 
-  for anchor in ${ANCHORS}; do
-    for model in ${PATCH_FORECAST_MODELS}; do
+  if [[ "${RUN_FORECAST}" != "0" ]]; then
+    for anchor in ${ANCHORS}; do
+      for model in ${PATCH_FORECAST_MODELS}; do
       wait_for_slot
       gpu="${gpus[$((job_idx % ${#gpus[@]}))]}"
       job_idx=$((job_idx + 1))
@@ -112,9 +116,10 @@ for patch_len in ${PATCH_VALUES}; do
           QAR_SPLIT_STRATEGY="${QAR_SPLIT_STRATEGY:-per_class_chrono}" \
           CHECKPOINTS="${HOME}/qar_checkpoint_archive/checkpoints_forecast/${run_tag}" \
           bash scripts/long_term_forecast/run_QAR_tsfile_forecast_shiftN80.sh
-      ) > "${log}" 2>&1 < /dev/null &
+        ) > "${log}" 2>&1 < /dev/null &
+      done
     done
-  done
+  fi
 done
 
 echo "[wait] patch-length jobs are running; expected jobs: ${expected}"
