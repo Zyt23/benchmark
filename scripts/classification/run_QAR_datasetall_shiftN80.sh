@@ -17,6 +17,10 @@ EARLY_STOP_METRIC="${EARLY_STOP_METRIC:-macro_f1}"
 QAR_SPLIT_STRATEGY="${QAR_SPLIT_STRATEGY:-per_class_chrono}"
 PATCH_LEN="${PATCH_LEN:-16}"
 STRIDE="${STRIDE:-8}"
+D_MODEL="${D_MODEL:-64}"
+D_FF="${D_FF:-128}"
+E_LAYERS="${E_LAYERS:-3}"
+N_HEADS="${N_HEADS:-8}"
 COMPACT_ROOT="${COMPACT_ROOT:-./datasetall_compact}"
 CHECKPOINTS="${CHECKPOINTS:-./checkpoints_datasetall/${RUN_TAG}}"
 LOG_DIR="${LOG_DIR:-./logs/datasetall/${RUN_TAG}}"
@@ -44,6 +48,7 @@ echo "EARLY_STOP_METRIC: ${EARLY_STOP_METRIC}"
 echo "QAR_SPLIT_STRATEGY: ${QAR_SPLIT_STRATEGY}"
 echo "PATCH_LEN: ${PATCH_LEN}"
 echo "STRIDE: ${STRIDE}"
+echo "MODEL_SHAPE: d_model=${D_MODEL} d_ff=${D_FF} e_layers=${E_LAYERS} n_heads=${N_HEADS}"
 echo "Checkpoints: ${CHECKPOINTS}"
 echo "Logs: ${LOG_DIR}"
 
@@ -77,10 +82,11 @@ for dataset in ${DATASETS}; do
       --data QAR_shift \
       --phase_a_shift -80 \
       --seq_len 2000 \
-      --e_layers 3 \
+      --e_layers "${E_LAYERS}" \
       --batch_size "${BATCH_SIZE}" \
-      --d_model 64 \
-      --d_ff 128 \
+      --d_model "${D_MODEL}" \
+      --d_ff "${D_FF}" \
+      --n_heads "${N_HEADS}" \
       --top_k 5 \
       --num_kernels 6 \
       --patch_len "${PATCH_LEN}" \

@@ -79,6 +79,10 @@ for patch_len in ${PATCH_VALUES}; do
         TRAIN_EPOCHS="${TRAIN_EPOCHS:-30}" \
         PATIENCE="${PATIENCE:-4}" \
         BATCH_SIZE="${CLS_BATCH_SIZE:-96}" \
+        D_MODEL="${CLS_D_MODEL:-64}" \
+        D_FF="${CLS_D_FF:-128}" \
+        E_LAYERS="${CLS_E_LAYERS:-3}" \
+        N_HEADS="${CLS_N_HEADS:-8}" \
         CLASS_WEIGHT="${CLASS_WEIGHT:-balanced}" \
         EARLY_STOP_METRIC="${EARLY_STOP_METRIC:-macro_f1}" \
         QAR_SPLIT_STRATEGY="${QAR_SPLIT_STRATEGY:-per_class_chrono}" \
