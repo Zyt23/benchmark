@@ -30,7 +30,7 @@ for anchor in ${ANCHORS}; do
     gpu="${gpus[$((job_idx % ${#gpus[@]}))]}"
     job_idx=$((job_idx + 1))
     run_tag="forecast_head_anomaly_${anchor}_${model}_${RUN_SUFFIX}"
-    printf "forecast_anomaly\tbase\t%s\t%s\t%s\t%s\t%s/%s\n" \
+    printf "forecast_anomaly_detection\tbase\t%s\t%s\t%s\t%s\t%s/%s\n" \
       "${anchor}" "${model}" "${datasets}" "${run_tag}" "${COMPACT_BASE}" "${anchor}" \
       >> "${log_root}/expected_jobs.tsv"
     (
