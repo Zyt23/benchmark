@@ -53,7 +53,7 @@ FAULT_DESC = {
 MODEL_ORDER = [
     "OLinear", "xPatch", "TimeMixer++", "DUET", "TimeMixer", "TimeXer",
     "iTransformer", "DLinear", "PatchTST", "TimesNet", "Transformer",
-    "Autoformer", "TiRex-2", "TiRex", "Chronos2", "Toto", "Moirai", "Sundial",
+    "Autoformer", "TiRex-2", "TiRex", "Chronos-2", "Toto-2.0", "Moirai", "Sundial",
     "MambaSL", "VSFormer", "LITE", "MultiROCKET", "MiniROCKET",
     "TabPFN", "KANAD", "AnomalyTransformer", "TranAD", "USAD",
     "OmniAnomaly",
@@ -65,7 +65,13 @@ FULL_SHOT_MODELS = [
     "Transformer",
 ]
 
-ZERO_SHOT_MODELS = ["TiRex-2", "TiRex", "Chronos2", "Toto", "Moirai", "Sundial"]
+ZERO_SHOT_MODELS = ["TiRex-2", "TiRex", "Chronos-2", "Toto-2.0", "Moirai", "Sundial"]
+
+MODEL_DISPLAY = {
+    "Chronos2": "Chronos-2",
+    "Toto": "Toto-2.0",
+    "TiRex2": "TiRex-2",
+}
 
 UNAVAILABLE_MODELS = {
     "TimeMixer++": "UNAVAILABLE\n官方仓库尚未发布 TimeMixer++ 实现",
@@ -130,13 +136,13 @@ def base_dataset(value: Any) -> str:
 
 
 def infer_variant(row: pd.Series) -> str:
-    variant = str(row.get("variant", "")).strip()
-    if variant and variant.lower() != "nan":
-        return variant
     dataset = str(row.get("dataset", ""))
     for suffix in AUGMENT_SUFFIXES:
         if dataset.endswith(suffix):
             return suffix.removeprefix("_")
+    variant = str(row.get("variant", "")).strip()
+    if variant and variant.lower() != "nan":
+        return variant
     return "base"
 
 
@@ -160,6 +166,7 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
     out["anchor_key"] = out.apply(infer_anchor, axis=1)
     if "model" not in out.columns:
         out["model"] = ""
+    out["model"] = out["model"].replace(MODEL_DISPLAY)
     return out
 
 
@@ -216,7 +223,8 @@ def anomaly_cell(row: pd.Series | None) -> str:
         f"acc={fmt(row.get('accuracy'))}  bal_acc={fmt(row.get('balanced_accuracy'))}\n"
         f"F1={fmt(row.get('f1'))}  macro_f1={fmt(row.get('macro_f1'))}\n"
         f"P={fmt(row.get('precision'))} R={fmt(row.get('recall'))} "
-        f"ROC={fmt(row.get('roc_auc'))} PR={fmt(row.get('pr_auc'))}\n"
+        f"ROC={fmt(row.get('roc_auc', row.get('auroc')))} "
+        f"PR={fmt(row.get('pr_auc', row.get('auprc')))}\n"
         f"TN={fmt(row.get('TN'))} FP={fmt(row.get('FP'))} "
         f"FN={fmt(row.get('FN'))} TP={fmt(row.get('TP'))}"
     )
@@ -227,6 +235,9 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
     forecast = normalize(read_csv(input_dir / "all_forecast_metrics.csv"))
     zero_shot = normalize(read_csv(input_dir / "all_zero_shot_metrics.csv"))
     anomaly = normalize(read_csv(input_dir / "all_anomaly_metrics.csv"))
+    forecast_anomaly = normalize(read_csv(input_dir / "all_forecast_anomaly_metrics.csv"))
+    coverage_audit = read_csv(input_dir / "coverage_audit.csv")
+    anomaly_correlation = read_csv(input_dir / "forecast_anomaly_correlations.csv")
     split_audit = read_csv(input_dir / "split_audit.csv")
     shortcut_audit = read_csv(input_dir / "shortcut_audit_summary.csv")
     augmentation_manifest = read_csv(input_dir / "dataset12_augmentation_manifest.csv")
@@ -260,8 +271,8 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
     conditions = [
         "划分：每个类别内部按航班时间排序后 7:1:2；训练/验证/测试航班源文件不重叠；测试集同时含正常与故障。",
         "分类：使用新工况长序列拼接，已移除 6→8 锚点；balanced CrossEntropy；按验证集 macro_f1 早停，测试集仅在最终评估一次。",
-        "预测：四个工况分别建集（2→3、4→5、5→6、8→9），转换点前 30 点+后 30 点；前 60 点预测后 20 点。",
-        "异常检测：只用正常训练集拟合；只用正常验证集误差的 P95 自动设阈值；测试标签仅用于最终计算指标。",
+        "预测：四个工况分别建集（2→3、4→5、5→6、8→9），转换点前 30 点+后 50 点；前 60 点预测后 20 点。",
+        "预测头异常检测：只用正常训练集拟合；误差类型和阈值只在混合验证集上选择；测试集仅最终评估一次。",
     ]
     put(row, 1, "实验条件", fill=group_fill, font=bold_font)
     put(row, 2, "\n".join(conditions), fill=group_fill)
@@ -320,10 +331,19 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
                 row += 1
             row += 2
 
-    base_cls = classification[classification["variant_key"] == "base"] if not classification.empty else classification
-    aug_cls = classification[classification["variant_key"] != "base"] if not classification.empty else classification
+    group_text = classification.get("experiment_group", pd.Series("", index=classification.index)).fillna("").astype(str)
+    base_cls = classification[(classification["variant_key"] == "base") & ~group_text.str.contains("patchlen")] if not classification.empty else classification
+    aug_cls = classification[classification["variant_key"].str.startswith("aug0_")] if not classification.empty else classification
+    scale_cls = classification[classification["variant_key"].isin(
+        ["both_keep25", "both_keep50", "normal_keep25", "normal_keep50"])] if not classification.empty else classification
+    normal_aug_cls = classification[classification["variant_key"].isin(
+        ["normalx2", "normalx4"])] if not classification.empty else classification
+    patch_cls = classification[group_text.str.contains("patchlen")] if not classification.empty else classification
     write_block("故障分类", base_cls, classification_cell)
     write_block("dataset12 追加正常样本分类", aug_cls, classification_cell, "variant_key")
+    write_block("分类：数据规模缩减", scale_cls, classification_cell, "variant_key")
+    write_block("分类：正常样本扩增", normal_aug_cls, classification_cell, "variant_key")
+    write_block("分类：PatchTST patch 长度", patch_cls, classification_cell, "patch_len")
     if not augmentation_manifest.empty:
         put(row, 1, "dataset12 追加正常样本清单", fill=title_fill, font=title_font)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=len(DATASETS) + 1)
@@ -347,15 +367,57 @@ def build_workbook(input_dir: Path, output: Path) -> Path:
             ws.row_dimensions[row].height = 70
             row += 1
         row += 2
-    write_block("预测性维护（全监督）", forecast, forecast_cell, "anchor_key", FULL_SHOT_MODELS)
+    forecast_group = forecast.get("experiment_group", pd.Series("", index=forecast.index)).fillna("").astype(str)
+    base_forecast = forecast[(forecast["variant_key"] == "base") & ~forecast_group.str.contains("patchlen")]
+    scale_forecast = forecast[forecast["variant_key"].isin(["both_keep25", "both_keep50"])].copy()
+    normal_aug_forecast = forecast[forecast["variant_key"].isin(["normalx2", "normalx4"])].copy()
+    for frame in (scale_forecast, normal_aug_forecast):
+        if not frame.empty:
+            frame["variant_anchor"] = frame["variant_key"].astype(str) + " / " + frame["anchor_key"].astype(str)
+    patch_forecast = forecast[forecast_group.str.contains("patchlen")].copy()
+    if not patch_forecast.empty:
+        patch_forecast["anchor_patch"] = patch_forecast["anchor_key"].astype(str) + " / patch=" + patch_forecast["patch_len"].astype(str)
+    write_block("预测性维护（全监督）", base_forecast, forecast_cell, "anchor_key", FULL_SHOT_MODELS)
+    write_block("预测：数据规模缩减", scale_forecast, forecast_cell, "variant_anchor")
+    write_block("预测：正常样本扩增", normal_aug_forecast, forecast_cell, "variant_anchor")
+    write_block("预测：PatchTST/TimeXer patch 长度", patch_forecast, forecast_cell, "anchor_patch", ["PatchTST", "TimeXer"])
+
+    zero_group = zero_shot.get("experiment_group", pd.Series("", index=zero_shot.index)).fillna("").astype(str)
+    zero_base = zero_shot[~zero_group.str.contains("foundation_context40|univariate_foundation", regex=True)]
+    foundation_context = zero_shot[zero_group.str.contains("foundation_context40")].copy()
+    univariate = zero_shot[zero_group.str.contains("univariate_foundation")].copy()
+    if not foundation_context.empty:
+        foundation_context["history_key"] = "history=" + foundation_context["history_count"].astype(str) + " flights"
     write_block(
         "预测性维护（零样本时序大模型）",
-        zero_shot,
+        zero_base,
         forecast_cell,
         "anchor_key",
         ZERO_SHOT_MODELS,
     )
+    write_block("大模型：历史航班上下文", foundation_context, forecast_cell, "history_key", ["TiRex-2", "Chronos-2", "Toto-2.0", "Moirai"])
+    write_block("单变量大模型：总管压力", univariate, forecast_cell, "anchor_key", ["Sundial"])
     write_block("时序异常检测（纯单类 P95）", anomaly, anomaly_cell)
+    write_block("预测模型更换异常检测头", forecast_anomaly, anomaly_cell, "anchor_key", ["Transformer", "TimesNet", "PatchTST", "DLinear", "iTransformer"])
+
+    def write_plain_table(title: str, frame: pd.DataFrame) -> None:
+        nonlocal row
+        if frame.empty:
+            return
+        put(row, 1, title, fill=title_fill, font=title_font)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=max(len(DATASETS) + 1, len(frame.columns)))
+        row += 1
+        for column, name in enumerate(frame.columns, 1):
+            put(row, column, str(name), fill=header_fill, font=bold_font)
+        row += 1
+        for _, table_row in frame.iterrows():
+            for column, value in enumerate(table_row.tolist(), 1):
+                put(row, column, fmt(value))
+            row += 1
+        row += 2
+
+    write_plain_table("实验覆盖审计", coverage_audit)
+    write_plain_table("预测误差与异常检测性能相关性（forecast_quality=-MSE）", anomaly_correlation)
 
     if not shortcut_audit.empty:
         put(row, 1, "传感器可分性与元信息捷径审计", fill=title_fill, font=title_font)

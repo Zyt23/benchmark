@@ -39,6 +39,11 @@ class Model(nn.Module):
         stride: int, stride for patch_embedding
         """
         super().__init__()
+        # TSLib instantiates models as ``Model(configs)``.  Without resolving
+        # these values from configs, command-line --patch_len/--stride are
+        # silently ignored and every sweep cell uses the defaults 16/8.
+        patch_len = int(getattr(configs, 'patch_len', patch_len))
+        stride = int(getattr(configs, 'stride', stride))
         self.task_name = configs.task_name
         self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
