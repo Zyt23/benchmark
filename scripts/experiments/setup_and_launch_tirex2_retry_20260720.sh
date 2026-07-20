@@ -11,12 +11,14 @@ TIREX2_ENV="${TIREX2_ENV:-${HOME}/anaconda3/envs/tirex2}"
 CONDA="${CONDA:-${HOME}/anaconda3/bin/conda}"
 ATTEMPTS="${ATTEMPTS:-3}"
 WAIT_SECONDS="${WAIT_SECONDS:-1800}"
+HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
+export HF_ENDPOINT
 
 cd "${PROJECT_ROOT}"
 
 access_ok=0
 for attempt in $(seq 1 "${ATTEMPTS}"); do
-  echo "[TiRex-2] access attempt ${attempt}/${ATTEMPTS}"
+  echo "[TiRex-2] access attempt ${attempt}/${ATTEMPTS} via ${HF_ENDPOINT}"
   if "${HOME}/anaconda3/bin/python" - <<'PY'
 from huggingface_hub import hf_hub_download
 print(hf_hub_download("NX-AI/TiRex-2", "model-config.yaml"))
